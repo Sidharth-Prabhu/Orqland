@@ -1,0 +1,671 @@
+import fs from 'fs';
+import path from 'path';
+import { Conversation, ChatMessage, ChatAttachment } from '@/types/chat';
+import { isBusinessUser, isAttachmentExpired } from './security';
+import { ATTACHMENT_RETENTION_MS } from './constants';
+
+const DB_PATH = path.join(process.cwd(), 'src/data/conversations_db.json');
+const USERS_PATH = path.join(process.cwd(), 'src/data/users_db.json');
+
+export interface StoredUserProfile {
+  email: string;
+  name: string;
+  avatar: string;
+  updatedAt: number;
+}
+
+// Ensure directory and database files exist
+function ensureFiles() {
+  const dir = path.dirname(DB_PATH);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+  if (!fs.existsSync(DB_PATH)) {
+    fs.writeFileSync(DB_PATH, JSON.stringify([], null, 2), 'utf-8');
+  }
+  if (!fs.existsSync(USERS_PATH)) {
+    fs.writeFileSync(USERS_PATH, JSON.stringify({}, null, 2), 'utf-8');
+  }
+}
+
+// Users DB helpers
+function readUsers(): Record<string, StoredUserProfile> {
+  ensureFiles();
+  try {
+    const raw = fs.readFileSync(USERS_PATH, 'utf-8');
+    if (!raw.trim()) return {};
+    return JSON.parse(raw);
+  } catch (err) {
+    console.error('Error reading users_db.json:', err);
+    return {};
+  }
+}
+
+function writeUsers(users: Record<string, StoredUserProfile>) {
+  ensureFiles();
+  try {
+    const tempFile = `${USERS_PATH}.tmp`;
+    fs.writeFileSync(tempFile, JSON.stringify(users, null, 2), 'utf-8');
+    fs.renameSync(tempFile, USERS_PATH);
+  } catch (err) {
+    console.error('Error writing users_db.json:', err);
+  }
+}
+
+// In-memory cache to reduce disk reads
+let cachedConversations: Conversation[] | null = null;
+
+function readAll(): Conversation[] {
+  ensureFiles();
+  try {
+    const data = fs.readFileSync(DB_PATH, 'utf-8');
+    if (!data.trim()) return [];
+    cachedConversations = JSON.parse(data);
+    return cachedConversations || [];
+  } catch (err) {
+    console.error('Error reading conversations_db.json:', err);
+    return cachedConversations || [];
+  }
+}
+
+function writeAll(conversations: Conversation[]) {
+  ensureFiles();
+  try {
+    cachedConversations = conversations;
+    const tempFile = `${DB_PATH}.tmp`;
+    fs.writeFileSync(tempFile, JSON.stringify(conversations, null, 2), 'utf-8');
+    fs.renameSync(tempFile, DB_PATH);
+  } catch (err) {
+    console.error('Error writing conversations_db.json:', err);
+  }
+}
+
+// Automatically purge attachments older than 48 hours
+function purgeExpired(convs: Conversation[]): Conversation[] {
+  let modified = false;
+
+  const cleaned = convs.map((conv) => {
+    let convModified = false;
+    const messages = conv.messages.map((msg) => {
+      if (
+        msg.attachment &&
+        !msg.attachment.isExpired &&
+        isAttachmentExpired(msg.attachment.uploadedAt, msg.attachment.expiresAt)
+      ) {
+        convModified = true;
+        modified = true;
+        return {
+          ...msg,
+          attachment: {
+            ...msg.attachment,
+            isExpired: true,
+            url: '', // purge the data/URL
+          },
+        };
+      }
+      return msg;
+    });
+
+    if (convModified) {
+      return { ...conv, messages };
+    }
+    return conv;
+  });
+
+  if (modified) {
+    writeAll(cleaned);
+  }
+  return cleaned;
+}
+
+// Clean avatar: filter out any leftover placeholder unsplash stock images
+function sanitizeAvatar(avatar?: string | null): string {
+  if (!avatar || typeof avatar !== 'string') return '';
+  const trimmed = avatar.trim();
+  if (trimmed.includes('images.unsplash.com')) return '';
+  return trimmed;
+}
+
+// Helper to resolve the correct participant perspective for the viewer
+export function formatConversationForViewer(conv: Conversation, viewerEmail: string): Conversation {
+  const normViewer = viewerEmail.trim().toLowerCase();
+  const isBusiness = isBusinessUser(normViewer);
+  const users = readUsers();
+
+  const clientUser = users[(conv.clientEmail || '').toLowerCase()];
+  const businessUser = users[(conv.businessEmail || '').toLowerCase()];
+
+  const effectiveClientAvatar =
+    sanitizeAvatar(clientUser?.avatar) ||
+    sanitizeAvatar(conv.clientAvatar) ||
+    '';
+
+  const effectiveClientName =
+    clientUser?.name ||
+    conv.clientName ||
+    conv.clientEmail?.split('@')[0] ||
+    'Client';
+
+  const effectiveBusinessAvatar =
+    sanitizeAvatar(businessUser?.avatar) ||
+    sanitizeAvatar(conv.businessAvatar) ||
+    '';
+
+  const effectiveBusinessName =
+    businessUser?.name ||
+    conv.businessName ||
+    'Orqland Business Workspace';
+
+  if (isBusiness) {
+    return {
+      ...conv,
+      clientName: effectiveClientName,
+      clientAvatar: effectiveClientAvatar,
+      unreadCount: conv.unreadByBusiness || 0,
+      participant: {
+        id: conv.clientEmail || '',
+        name: effectiveClientName,
+        email: conv.clientEmail,
+        handle: `@${conv.clientEmail?.split('@')[0] || 'client'}`,
+        avatar: effectiveClientAvatar,
+        isOnline: true,
+        role: 'client',
+      },
+    };
+  } else {
+    return {
+      ...conv,
+      businessName: effectiveBusinessName,
+      businessAvatar: effectiveBusinessAvatar,
+      unreadCount: conv.unreadByClient || 0,
+      participant: {
+        id: conv.businessEmail || '',
+        name: effectiveBusinessName,
+        email: conv.businessEmail,
+        handle: '@orqland',
+        avatar: effectiveBusinessAvatar,
+        isOnline: true,
+        role: 'business',
+      },
+    };
+  }
+}
+
+export const serverChatStore = {
+  /**
+   * Sync a user profile into the database and update all conversations/messages
+   */
+  syncUserProfile(params: {
+    email: string;
+    name?: string | null;
+    avatar?: string | null;
+  }): StoredUserProfile {
+    if (!params.email) throw new Error('Email is required');
+    const normEmail = params.email.trim().toLowerCase();
+    const cleanAvatar = sanitizeAvatar(params.avatar);
+    const cleanName = params.name?.trim() || normEmail.split('@')[0];
+
+    const users = readUsers();
+    const existing = users[normEmail];
+
+    const updatedUser: StoredUserProfile = {
+      email: normEmail,
+      name: cleanName || existing?.name || normEmail.split('@')[0],
+      avatar: cleanAvatar || existing?.avatar || '',
+      updatedAt: Date.now(),
+    };
+
+    users[normEmail] = updatedUser;
+    writeUsers(users);
+
+    // Update all existing conversations and messages involving this user
+    const all = readAll();
+    let modified = false;
+
+    for (let i = 0; i < all.length; i++) {
+      const c = all[i];
+      let convChanged = false;
+
+      // If this user is the client
+      if ((c.clientEmail || '').toLowerCase() === normEmail) {
+        if (updatedUser.avatar && c.clientAvatar !== updatedUser.avatar) {
+          c.clientAvatar = updatedUser.avatar;
+          convChanged = true;
+        }
+        if (updatedUser.name && c.clientName !== updatedUser.name) {
+          c.clientName = updatedUser.name;
+          convChanged = true;
+        }
+      }
+
+      // If this user is the business
+      if ((c.businessEmail || '').toLowerCase() === normEmail) {
+        if (updatedUser.avatar && c.businessAvatar !== updatedUser.avatar) {
+          c.businessAvatar = updatedUser.avatar;
+          convChanged = true;
+        }
+        if (updatedUser.name && c.businessName !== updatedUser.name) {
+          c.businessName = updatedUser.name;
+          convChanged = true;
+        }
+      }
+
+      // Update sender avatar across messages
+      if (updatedUser.avatar) {
+        c.messages = c.messages.map((m) => {
+          if ((m.senderEmail || '').toLowerCase() === normEmail && m.senderAvatar !== updatedUser.avatar) {
+            convChanged = true;
+            return {
+              ...m,
+              senderAvatar: updatedUser.avatar,
+              senderName: updatedUser.name || m.senderName,
+            };
+          }
+          return m;
+        });
+      }
+
+      if (convChanged) {
+        modified = true;
+        all[i] = c;
+      }
+    }
+
+    if (modified) {
+      writeAll(all);
+    }
+
+    return updatedUser;
+  },
+
+  getConversations(viewerEmail: string): Conversation[] {
+    if (!viewerEmail) return [];
+    const normViewer = viewerEmail.trim().toLowerCase();
+    const isBusiness = isBusinessUser(normViewer);
+    const all = purgeExpired(readAll());
+
+    if (isBusiness) {
+      return all
+        .filter((c) => !c.deletedByBusiness)
+        .map((c) => formatConversationForViewer(c, normViewer));
+    } else {
+      return all
+        .filter((c) => {
+          const clientMatches = (c.clientEmail || '').toLowerCase() === normViewer;
+          const notDeleted = !c.deletedForClient;
+          return clientMatches && notDeleted;
+        })
+        .map((c) => formatConversationForViewer(c, normViewer));
+    }
+  },
+
+  initiateChat(params: {
+    businessEmail: string;
+    businessName: string;
+    businessAvatar: string;
+    clientEmail: string;
+    clientName: string;
+    clientAvatar?: string;
+    workspaceName?: string;
+    initialMessage?: string;
+  }): Conversation {
+    const {
+      businessEmail,
+      businessName,
+      businessAvatar,
+      clientEmail,
+      clientName,
+      clientAvatar,
+      workspaceName = 'General Workspace',
+      initialMessage,
+    } = params;
+
+    if (!isBusinessUser(businessEmail)) {
+      throw new Error(
+        'Permission Denied: Only the Business account can initiate conversations with clients.'
+      );
+    }
+
+    if (!clientEmail || !clientEmail.trim() || !clientEmail.includes('@')) {
+      throw new Error('A valid client email address is required.');
+    }
+
+    const normClientEmail = clientEmail.trim().toLowerCase();
+    const normBusinessEmail = businessEmail.trim().toLowerCase();
+
+    // Check registered user profile for client & business
+    const users = readUsers();
+    const registeredClient = users[normClientEmail];
+    const registeredBusiness = users[normBusinessEmail];
+
+    const effectiveClientAvatar =
+      sanitizeAvatar(clientAvatar) ||
+      sanitizeAvatar(registeredClient?.avatar) ||
+      '';
+
+    const effectiveClientName =
+      clientName?.trim() ||
+      registeredClient?.name ||
+      normClientEmail.split('@')[0];
+
+    const effectiveBusinessAvatar =
+      sanitizeAvatar(businessAvatar) ||
+      sanitizeAvatar(registeredBusiness?.avatar) ||
+      '';
+
+    const effectiveBusinessName =
+      businessName?.trim() ||
+      registeredBusiness?.name ||
+      'Orqland Business Workspace';
+
+    const all = readAll();
+
+    const existingIndex = all.findIndex(
+      (c) =>
+        (c.clientEmail || '').toLowerCase() === normClientEmail &&
+        (c.businessEmail || '').toLowerCase() === normBusinessEmail
+    );
+
+    const now = Date.now();
+    const timeString = new Date(now).toLocaleTimeString([], {
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+
+    if (existingIndex >= 0) {
+      const existing = all[existingIndex];
+
+      // If active, restore business visibility and append message
+      if (existing.status === 'active') {
+        const updatedMessages = [...existing.messages];
+        if (initialMessage && initialMessage.trim()) {
+          updatedMessages.push({
+            id: `msg-${now}`,
+            conversationId: existing.id,
+            senderId: normBusinessEmail,
+            senderEmail: normBusinessEmail,
+            senderName: effectiveBusinessName,
+            senderAvatar: effectiveBusinessAvatar,
+            content: initialMessage.trim(),
+            timestamp: timeString,
+            date: 'Today',
+            createdAt: now,
+            status: 'delivered',
+          });
+        }
+
+        const updated: Conversation = {
+          ...existing,
+          clientName: effectiveClientName || existing.clientName,
+          clientAvatar: effectiveClientAvatar || existing.clientAvatar,
+          businessName: effectiveBusinessName || existing.businessName,
+          businessAvatar: effectiveBusinessAvatar || existing.businessAvatar,
+          deletedByBusiness: false,
+          deletedForClient: false,
+          unreadByClient: initialMessage?.trim()
+            ? (existing.unreadByClient || 0) + 1
+            : existing.unreadByClient || 0,
+          lastMessage: initialMessage?.trim() || existing.lastMessage,
+          lastMessageTime: timeString,
+          lastMessageTimestamp: now,
+          messages: updatedMessages,
+        };
+
+        all[existingIndex] = updated;
+        writeAll(all);
+        return formatConversationForViewer(updated, normBusinessEmail);
+      }
+    }
+
+    // Create brand new conversation
+    const convId = `conv-${now}`;
+    const initialMessages: ChatMessage[] = [];
+
+    if (initialMessage && initialMessage.trim()) {
+      initialMessages.push({
+        id: `msg-${now}`,
+        conversationId: convId,
+        senderId: normBusinessEmail,
+        senderEmail: normBusinessEmail,
+        senderName: effectiveBusinessName,
+        senderAvatar: effectiveBusinessAvatar,
+        content: initialMessage.trim(),
+        timestamp: timeString,
+        date: 'Today',
+        createdAt: now,
+        status: 'delivered',
+      });
+    }
+
+    const newConversation: Conversation = {
+      id: convId,
+      clientId: normClientEmail,
+      clientEmail: normClientEmail,
+      clientName: effectiveClientName,
+      clientAvatar: effectiveClientAvatar,
+      businessId: normBusinessEmail,
+      businessEmail: normBusinessEmail,
+      businessName: effectiveBusinessName,
+      businessAvatar: effectiveBusinessAvatar,
+      participant: {
+        id: normClientEmail,
+        name: effectiveClientName,
+        email: normClientEmail,
+        handle: `@${normClientEmail.split('@')[0]}`,
+        avatar: effectiveClientAvatar,
+        isOnline: true,
+        role: 'client',
+      },
+      status: 'active',
+      deletedByBusiness: false,
+      deletedForClient: false,
+      lastMessage: initialMessage?.trim() || 'Conversation opened by business',
+      lastMessageTime: timeString,
+      lastMessageTimestamp: now,
+      unreadCount: 0,
+      unreadByClient: initialMessage?.trim() ? 1 : 0,
+      unreadByBusiness: 0,
+      workspaceInfo: {
+        name: workspaceName,
+        type: 'Orqspace',
+        description: 'Direct communication channel between business and client.',
+      },
+      messages: initialMessages,
+    };
+
+    all.unshift(newConversation);
+    writeAll(all);
+
+    return formatConversationForViewer(newConversation, normBusinessEmail);
+  },
+
+  sendMessage(params: {
+    conversationId: string;
+    senderEmail: string;
+    senderName: string;
+    senderAvatar: string;
+    content: string;
+    attachment?: ChatAttachment;
+  }): { message: ChatMessage; conversation: Conversation } {
+    const {
+      conversationId,
+      senderEmail,
+      senderName,
+      senderAvatar,
+      content,
+      attachment,
+    } = params;
+
+    const all = readAll();
+    const index = all.findIndex((c) => c.id === conversationId);
+
+    if (index === -1) {
+      throw new Error('Conversation not found.');
+    }
+
+    const conv = all[index];
+
+    if (conv.status === 'ended') {
+      throw new Error('This chat has been permanently ended. No further messages can be sent.');
+    }
+
+    const normSender = senderEmail.trim().toLowerCase();
+    const isSenderBusiness = normSender === (conv.businessEmail || '').toLowerCase();
+    const isSenderClient = normSender === (conv.clientEmail || '').toLowerCase();
+
+    if (!isSenderBusiness && !isSenderClient) {
+      throw new Error('Unauthorized: You are not a participant in this conversation.');
+    }
+
+    // Auto-sync sender avatar if real avatar provided
+    const cleanSenderAvatar = sanitizeAvatar(senderAvatar);
+    if (cleanSenderAvatar) {
+      serverChatStore.syncUserProfile({
+        email: normSender,
+        name: senderName,
+        avatar: cleanSenderAvatar,
+      });
+    }
+
+    const now = Date.now();
+    const timeString = new Date(now).toLocaleTimeString([], {
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+
+    const newMessage: ChatMessage = {
+      id: `msg-${now}-${Math.random().toString(36).slice(2, 6)}`,
+      conversationId,
+      senderId: normSender,
+      senderEmail: normSender,
+      senderName,
+      senderAvatar: cleanSenderAvatar || senderAvatar,
+      content: content.trim(),
+      timestamp: timeString,
+      date: 'Today',
+      createdAt: now,
+      status: 'delivered',
+      attachment: attachment
+        ? {
+            ...attachment,
+            uploadedAt: now,
+            expiresAt: now + ATTACHMENT_RETENTION_MS,
+            isExpired: false,
+          }
+        : undefined,
+    };
+
+    const updatedMessages = [...conv.messages, newMessage];
+
+    const updatedConv: Conversation = {
+      ...conv,
+      clientAvatar: isSenderClient && cleanSenderAvatar ? cleanSenderAvatar : conv.clientAvatar,
+      businessAvatar: isSenderBusiness && cleanSenderAvatar ? cleanSenderAvatar : conv.businessAvatar,
+      deletedByBusiness: isSenderBusiness ? false : conv.deletedByBusiness,
+      lastMessage: content.trim() || (attachment ? `[${attachment.type.toUpperCase()} Attachment]` : ''),
+      lastMessageTime: timeString,
+      lastMessageTimestamp: now,
+      messages: updatedMessages,
+      unreadByClient: isSenderBusiness ? (conv.unreadByClient || 0) + 1 : conv.unreadByClient || 0,
+      unreadByBusiness: isSenderClient ? (conv.unreadByBusiness || 0) + 1 : conv.unreadByBusiness || 0,
+    };
+
+    all[index] = updatedConv;
+    writeAll(all);
+
+    return {
+      message: newMessage,
+      conversation: formatConversationForViewer(updatedConv, normSender),
+    };
+  },
+
+  deleteChat(conversationId: string, userEmail: string): Conversation {
+    if (!isBusinessUser(userEmail)) {
+      throw new Error('Permission Denied: Only the Business can delete a chat from their perspective.');
+    }
+
+    const all = readAll();
+    const index = all.findIndex((c) => c.id === conversationId);
+
+    if (index === -1) {
+      throw new Error('Conversation not found.');
+    }
+
+    const updated: Conversation = {
+      ...all[index],
+      deletedByBusiness: true,
+      businessDeletedAt: Date.now(),
+    };
+
+    all[index] = updated;
+    writeAll(all);
+
+    return formatConversationForViewer(updated, userEmail);
+  },
+
+  endChat(conversationId: string, userEmail: string): Conversation {
+    if (!isBusinessUser(userEmail)) {
+      throw new Error('Permission Denied: Only the Business can end an active chat.');
+    }
+
+    const all = readAll();
+    const index = all.findIndex((c) => c.id === conversationId);
+
+    if (index === -1) {
+      throw new Error('Conversation not found.');
+    }
+
+    const now = Date.now();
+    const updated: Conversation = {
+      ...all[index],
+      status: 'ended',
+      endedAt: now,
+      endedBy: userEmail.trim().toLowerCase(),
+      deletedForClient: true,
+      lastMessage: 'This chat was permanently ended by the business.',
+      lastMessageTime: new Date(now).toLocaleTimeString([], {
+        hour: '2-digit',
+        minute: '2-digit',
+      }),
+      lastMessageTimestamp: now,
+    };
+
+    all[index] = updated;
+    writeAll(all);
+
+    return formatConversationForViewer(updated, userEmail);
+  },
+
+  markAsRead(conversationId: string, readerEmail: string) {
+    if (!readerEmail) return;
+    const all = readAll();
+    const index = all.findIndex((c) => c.id === conversationId);
+
+    if (index === -1) return;
+
+    const conv = all[index];
+    const normReader = readerEmail.trim().toLowerCase();
+    const isBusiness = isBusinessUser(normReader);
+
+    let hasUnread = false;
+    const updatedMessages = conv.messages.map((m) => {
+      if (m.senderEmail?.toLowerCase() !== normReader && m.status !== 'read') {
+        hasUnread = true;
+        return { ...m, status: 'read' as const };
+      }
+      return m;
+    });
+
+    const updated: Conversation = {
+      ...conv,
+      unreadByBusiness: isBusiness ? 0 : conv.unreadByBusiness || 0,
+      unreadByClient: !isBusiness ? 0 : conv.unreadByClient || 0,
+      messages: updatedMessages,
+    };
+
+    if (hasUnread || (isBusiness ? conv.unreadByBusiness : conv.unreadByClient)) {
+      all[index] = updated;
+      writeAll(all);
+    }
+  },
+};

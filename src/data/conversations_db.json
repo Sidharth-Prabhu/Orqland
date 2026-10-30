@@ -1,0 +1,51 @@
+[
+  {
+    "id": "conv-1793339552513",
+    "clientId": "ycssidharth@gmail.com",
+    "clientEmail": "ycssidharth@gmail.com",
+    "clientName": "Sidharth Prabhu",
+    "clientAvatar": "https://lh3.googleusercontent.com/a/ACg8ocLc1nCqvrP5EtodEm0Zq5cKvkrYEH-I0jaoX8bFrpvmR4FyQeUh=s96-c",
+    "businessId": "mailtosidharth.me@gmail.com",
+    "businessEmail": "mailtosidharth.me@gmail.com",
+    "businessName": "Sidharth Prabhu",
+    "businessAvatar": "https://lh3.googleusercontent.com/a/ACg8ocK77osqTQ76zfsDwgj5r5kQZiKsBHRgjI-1NqrM62sChRVilDG5dA=s96-c",
+    "participant": {
+      "id": "ycssidharth@gmail.com",
+      "name": "Sidharth",
+      "email": "ycssidharth@gmail.com",
+      "handle": "@ycssidharth",
+      "avatar": "https://lh3.googleusercontent.com/a/ACg8ocLc1nCqvrP5EtodEm0Zq5cKvkrYEH-I0jaoX8bFrpvmR4FyQeUh=s96-c",
+      "isOnline": true,
+      "role": "client"
+    },
+    "status": "active",
+    "deletedByBusiness": false,
+    "deletedForClient": false,
+    "lastMessage": "Hi",
+    "lastMessageTime": "11:22 AM",
+    "lastMessageTimestamp": 1793339560712,
+    "unreadCount": 0,
+    "unreadByClient": 0,
+    "unreadByBusiness": 0,
+    "workspaceInfo": {
+      "name": "General Consultation",
+      "type": "Orqspace",
+      "description": "Direct communication channel between business and client."
+    },
+    "messages": [
+      {
+        "id": "msg-1793339560712-2kvw",
+        "conversationId": "conv-1793339552513",
+        "senderId": "mailtosidharth.me@gmail.com",
+        "senderEmail": "mailtosidharth.me@gmail.com",
+        "senderName": "Sidharth Prabhu's Workspace",
+        "senderAvatar": "https://lh3.googleusercontent.com/a/ACg8ocK77osqTQ76zfsDwgj5r5kQZiKsBHRgjI-1NqrM62sChRVilDG5dA=s96-c",
+        "content": "Hi",
+        "timestamp": "11:22 AM",
+        "date": "Today",
+        "createdAt": 1793339560712,
+        "status": "read"
+      }
+    ]
+  }
+]

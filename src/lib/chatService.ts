@@ -225,11 +225,44 @@ export const chatService = {
       throw new Error(data.error || 'Failed to delete chat.');
     }
 
-    // Remove from local cache for business
-    const filtered = loadCachedConversations().filter((c) => c.id !== conversationId);
-    saveCachedConversations(filtered);
+    // Update local cache with cleared history conversation
+    const updatedConv: Conversation = data.conversation;
+    const latest = loadCachedConversations().map((c) =>
+      c.id === updatedConv.id ? updatedConv : c
+    );
+    saveCachedConversations(latest);
+    notifyCrossTab();
 
-    return data.conversation;
+    return updatedConv;
+  },
+
+  /**
+   * Delete an individual message from business view
+   */
+  async deleteMessage(
+    conversationId: string,
+    messageId: string,
+    userEmail: string
+  ): Promise<Conversation> {
+    const res = await fetch('/api/chat/delete-message', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ conversationId, messageId, userEmail }),
+    });
+
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      throw new Error(data.error || 'Failed to delete message.');
+    }
+
+    const updatedConv: Conversation = data.conversation;
+    const latest = loadCachedConversations().map((c) =>
+      c.id === updatedConv.id ? updatedConv : c
+    );
+    saveCachedConversations(latest);
+    notifyCrossTab();
+
+    return updatedConv;
   },
 
   /**

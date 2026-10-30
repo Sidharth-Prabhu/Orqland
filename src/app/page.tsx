@@ -8,6 +8,8 @@ import { DirectMessagesList } from '@/components/DirectMessagesList';
 import { ChatConversation } from '@/components/ChatConversation';
 import { DetailsSidebar } from '@/components/DetailsSidebar';
 import { StartChatModal } from '@/components/chat/StartChatModal';
+import { EndChatModal } from '@/components/chat/EndChatModal';
+import { DeleteChatModal } from '@/components/chat/DeleteChatModal';
 import { useAuth } from '@/context/AuthContext';
 import { chatService } from '@/lib/chatService';
 import { BUSINESS_EMAIL } from '@/lib/constants';
@@ -32,6 +34,9 @@ export default function Home() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string>('');
   const [isStartChatModalOpen, setIsStartChatModalOpen] = useState(false);
+  const [isEndModalOpen, setIsEndModalOpen] = useState(false);
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [deletingConversationId, setDeletingConversationId] = useState<string | null>(null);
 
   // Redirect unauthenticated users to /login immediately
   useEffect(() => {
@@ -145,14 +150,23 @@ export default function Home() {
     }
   };
 
-  // Delete Chat (Business only - clears business view only)
+  // Delete Chat (Business only - clears business conversation history; connection and client view remain active)
   const handleDeleteChat = async (conversationId: string) => {
     if (!user?.email || !isBusiness) return;
     try {
       await chatService.deleteChat(conversationId, user.email);
-      setActiveConversationId((prev) => (prev === conversationId ? '' : prev));
     } catch (err) {
       console.error('Delete chat error:', err);
+    }
+  };
+
+  // Delete individual message (Business only - clears message from business view)
+  const handleDeleteMessage = async (messageId: string) => {
+    if (!activeConversation || !user?.email || !isBusiness) return;
+    try {
+      await chatService.deleteMessage(activeConversation.id, messageId, user.email);
+    } catch (err) {
+      console.error('Delete message error:', err);
     }
   };
 
@@ -239,6 +253,14 @@ export default function Home() {
           onSelectConversation={handleSelectConversation}
           isBusiness={isBusiness}
           onOpenStartChat={isBusiness ? () => setIsStartChatModalOpen(true) : undefined}
+          onDeleteConversation={
+            isBusiness
+              ? (id) => {
+                  setDeletingConversationId(id);
+                  setIsDeleteModalOpen(true);
+                }
+              : undefined
+          }
         />
 
         {/* Center: Active Chat Conversation or Clean Role-Specific Empty State */}
@@ -249,6 +271,7 @@ export default function Home() {
             onSendMessage={handleSendMessage}
             onDeleteChat={isBusiness ? handleDeleteChat : undefined}
             onEndChat={isBusiness ? handleEndChat : undefined}
+            onDeleteMessage={isBusiness ? handleDeleteMessage : undefined}
           />
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center p-8 text-center bg-[#fafafa]">
@@ -294,6 +317,8 @@ export default function Home() {
           <DetailsSidebar
             conversation={activeConversation}
             isBusiness={isBusiness}
+            onEndChat={isBusiness ? () => setIsEndModalOpen(true) : undefined}
+            onDeleteChat={isBusiness ? () => setIsDeleteModalOpen(true) : undefined}
           />
         )}
       </div>
@@ -335,6 +360,43 @@ export default function Home() {
           isOpen={isStartChatModalOpen}
           onClose={() => setIsStartChatModalOpen(false)}
           onInitiate={handleInitiateChat}
+        />
+      )}
+
+      {/* End Chat Modal (Business Only - via Sidebar or Shortcuts) */}
+      {isBusiness && activeConversation && (
+        <EndChatModal
+          isOpen={isEndModalOpen}
+          onClose={() => setIsEndModalOpen(false)}
+          onConfirm={async () => {
+            await handleEndChat(activeConversation.id);
+            setIsEndModalOpen(false);
+          }}
+          clientName={activeConversation.participant.name}
+        />
+      )}
+
+      {/* Delete Chat Modal (Business Only - via List, Header or Sidebar) */}
+      {isBusiness && (deletingConversationId || activeConversation) && (
+        <DeleteChatModal
+          isOpen={isDeleteModalOpen}
+          onClose={() => {
+            setIsDeleteModalOpen(false);
+            setDeletingConversationId(null);
+          }}
+          onConfirm={async () => {
+            const targetId = deletingConversationId || activeConversation?.id;
+            if (targetId) {
+              await handleDeleteChat(targetId);
+            }
+            setIsDeleteModalOpen(false);
+            setDeletingConversationId(null);
+          }}
+          clientName={
+            conversations.find((c) => c.id === deletingConversationId)?.participant.name ||
+            activeConversation?.participant.name ||
+            'Client'
+          }
         />
       )}
     </main>

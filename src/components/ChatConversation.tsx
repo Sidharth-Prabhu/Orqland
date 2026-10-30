@@ -22,6 +22,7 @@ import {
   Ban,
   AlertCircle,
   RefreshCw,
+  Maximize2,
 } from 'lucide-react';
 import { Conversation, ChatMessage, ChatAttachment } from '@/types/chat';
 import { isBusinessUser, detectSensitiveContent } from '@/lib/security';
@@ -29,6 +30,8 @@ import { DeleteChatModal } from '@/components/chat/DeleteChatModal';
 import { EndChatModal } from '@/components/chat/EndChatModal';
 import { AttachmentModal } from '@/components/chat/AttachmentModal';
 import { LocationModal } from '@/components/chat/LocationModal';
+import { ImageViewerModal } from '@/components/chat/ImageViewerModal';
+import { PdfViewerModal } from '@/components/chat/PdfViewerModal';
 import { UserAvatar } from '@/components/ui/UserAvatar';
 
 interface ChatConversationProps {
@@ -38,6 +41,7 @@ interface ChatConversationProps {
   onDeleteChat?: (conversationId: string) => Promise<void>;
   onEndChat?: (conversationId: string) => Promise<void>;
   onRetryMessage?: (message: ChatMessage) => void;
+  onDeleteMessage?: (messageId: string) => Promise<void>;
 }
 
 export const ChatConversation: React.FC<ChatConversationProps> = ({
@@ -47,6 +51,7 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
   onDeleteChat,
   onEndChat,
   onRetryMessage,
+  onDeleteMessage,
 }) => {
   const [inputText, setInputText] = useState('');
   const [showOptionsDropdown, setShowOptionsDropdown] = useState(false);
@@ -55,6 +60,8 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
   const [isAttachmentModalOpen, setIsAttachmentModalOpen] = useState(false);
   const [isLocationModalOpen, setIsLocationModalOpen] = useState(false);
   const [isActionSubmitting, setIsActionSubmitting] = useState(false);
+  const [previewImage, setPreviewImage] = useState<{ url: string; name: string } | null>(null);
+  const [previewPdf, setPreviewPdf] = useState<{ url: string; name: string; size?: number } | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const optionsDropdownRef = useRef<HTMLDivElement>(null);
@@ -257,6 +264,26 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
             <Search size={18} />
           </button>
 
+          {/* Business Session Control: Prominent End Chat Button */}
+          {isBusiness && !isChatEnded && (
+            <button
+              type="button"
+              onClick={() => setIsEndModalOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-red-600 bg-red-50 hover:bg-red-100 border border-red-200 transition-all cursor-pointer shadow-xs hover:shadow-sm"
+              title="Permanently End Chat Session"
+            >
+              <Ban size={14} className="text-red-500" />
+              <span>End Chat</span>
+            </button>
+          )}
+
+          {isChatEnded && (
+            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-red-700 bg-red-100/80 border border-red-200">
+              <Lock size={13} />
+              <span>Session Ended</span>
+            </div>
+          )}
+
           {/* Options Dropdown: Delete Chat vs End Chat (Business Only) */}
           {isBusiness && (
             <div className="relative" ref={optionsDropdownRef}>
@@ -300,9 +327,9 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
                     >
                       <Ban size={15} />
                       <div className="text-left">
-                        <div>End Chat</div>
+                        <div>End Chat Session</div>
                         <div className="text-[10px] text-red-400 font-normal">
-                          Permanently close & purge client
+                          Terminate session permanently
                         </div>
                       </div>
                     </button>
@@ -319,7 +346,7 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
         <div className="bg-red-50 border-b border-red-200/80 px-6 py-2.5 flex items-center gap-2 text-xs text-red-800">
           <Lock size={15} className="text-red-600 flex-shrink-0" />
           <span>
-            This chat was permanently ended by the business. The communication connection is closed and no further messages can be sent.
+            This chat session was terminated by the business. The communication connection is closed and neither party can send or receive messages in this session.
           </span>
         </div>
       )}
@@ -327,14 +354,36 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
       {/* Messages Timeline */}
       <div className="flex-1 overflow-y-auto px-6 py-4 space-y-5">
         {conversation.messages.length === 0 ? (
-          <div className="h-full flex flex-col items-center justify-center text-center p-6 text-gray-400">
-            <p className="text-xs font-semibold text-gray-600">No messages yet in this conversation</p>
-            <p className="text-[11px] text-gray-400 mt-1">
-              Say hello or share an inquiry to start exchanging messages.
-            </p>
-          </div>
+          conversation.businessDeletedAt && isBusiness ? (
+            <div className="h-full flex flex-col items-center justify-center text-center p-6">
+              <div className="w-12 h-12 rounded-2xl bg-amber-50 border border-amber-200/80 flex items-center justify-center text-amber-600 mb-3 shadow-xs">
+                <Trash2 size={20} />
+              </div>
+              <h4 className="text-xs font-bold text-gray-800">
+                Conversation History Cleared on Your Side
+              </h4>
+              <p className="text-[11px] text-gray-500 max-w-sm mt-1.5 leading-relaxed">
+                Existing messages remain visible to {conversation.participant.name}. Your communication connection remains active and you can send a message below anytime.
+              </p>
+            </div>
+          ) : (
+            <div className="h-full flex flex-col items-center justify-center text-center p-6 text-gray-400">
+              <p className="text-xs font-semibold text-gray-600">No messages yet in this conversation</p>
+              <p className="text-[11px] text-gray-400 mt-1">
+                Say hello or share an inquiry to start exchanging messages.
+              </p>
+            </div>
+          )
         ) : (
-          conversation.messages.map((msg) => {
+          <>
+            {conversation.businessDeletedAt && isBusiness && (
+              <div className="flex items-center justify-center mb-2">
+                <span className="text-[10px] font-semibold text-amber-800/80 bg-amber-50 border border-amber-200/60 px-3 py-1 rounded-full">
+                  Earlier messages cleared from your view • Connection remains active
+                </span>
+              </div>
+            )}
+            {conversation.messages.map((msg) => {
             const isMe = msg.senderEmail?.toLowerCase() === currentUserEmail.toLowerCase();
             return (
               <div
@@ -363,6 +412,18 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
                       {msg.timestamp}
                     </span>
                     {isMe && renderDeliveryStatus(msg.status)}
+
+                    {/* Delete individual chat message */}
+                    {isBusiness && onDeleteMessage && (
+                      <button
+                        type="button"
+                        onClick={() => onDeleteMessage(msg.id)}
+                        className="opacity-0 group-hover:opacity-100 p-0.5 text-gray-400 hover:text-amber-700 hover:bg-amber-100/70 rounded transition-all cursor-pointer"
+                        title="Delete this message from your view"
+                      >
+                        <Trash2 size={11} />
+                      </button>
+                    )}
                   </div>
 
                   {/* Message Body */}
@@ -386,44 +447,100 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
                             <span>Attachment expired and permanently deleted (48-hour limit reached).</span>
                           </div>
                         ) : msg.attachment.type === 'image' ? (
-                          /* Image Attachment */
+                          /* Image Attachment with Click-to-Enlarge */
                           <div className="space-y-1">
-                            <div className="rounded-xl overflow-hidden relative max-w-sm max-h-60 bg-black/10">
+                            <div
+                              onClick={() =>
+                                setPreviewImage({
+                                  url: msg.attachment!.url,
+                                  name: msg.attachment!.name,
+                                })
+                              }
+                              role="button"
+                              tabIndex={0}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter' || e.key === ' ') {
+                                  e.preventDefault();
+                                  setPreviewImage({
+                                    url: msg.attachment!.url,
+                                    name: msg.attachment!.name,
+                                  });
+                                }
+                              }}
+                              className="rounded-xl overflow-hidden relative max-w-sm max-h-60 bg-black/10 cursor-pointer group/img transition-all hover:ring-2 hover:ring-blue-400"
+                              title="Click to view larger image"
+                            >
                               <Image
                                 src={msg.attachment.url}
                                 alt={msg.attachment.name}
                                 width={320}
                                 height={200}
-                                className="object-cover rounded-xl"
+                                className="object-cover rounded-xl transition-transform duration-200 group-hover/img:scale-[1.02]"
                                 unoptimized
                               />
+                              <div className="absolute inset-0 bg-black/0 group-hover/img:bg-black/30 transition-all flex items-center justify-center opacity-0 group-hover/img:opacity-100">
+                                <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-black/70 text-white text-[11px] font-bold backdrop-blur-xs shadow-lg transform translate-y-1 group-hover/img:translate-y-0 transition-all">
+                                  <Maximize2 size={13} />
+                                  <span>Click to enlarge</span>
+                                </span>
+                              </div>
                             </div>
                             <div className="text-[10px] opacity-75 flex items-center justify-between">
-                              <span>{msg.attachment.name}</span>
-                              <span className="italic">Auto-deletes in 48h</span>
+                              <span className="truncate max-w-[180px]">{msg.attachment.name}</span>
+                              <span className="italic flex-shrink-0">Auto-deletes in 48h</span>
                             </div>
                           </div>
                         ) : msg.attachment.type === 'pdf' ? (
-                          /* PDF Document Attachment */
-                          <div className="flex items-center justify-between gap-3 p-2.5 bg-black/10 rounded-xl">
-                            <div className="flex items-center gap-2 min-w-0">
-                              <FileText size={20} className="text-white flex-shrink-0" />
+                          /* PDF Document Attachment - Opens in Built-in PDF Viewer */
+                          <div
+                            onClick={() =>
+                              setPreviewPdf({
+                                url: msg.attachment!.url,
+                                name: msg.attachment!.name,
+                                size: msg.attachment!.size,
+                              })
+                            }
+                            role="button"
+                            tabIndex={0}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' || e.key === ' ') {
+                                e.preventDefault();
+                                setPreviewPdf({
+                                  url: msg.attachment!.url,
+                                  name: msg.attachment!.name,
+                                  size: msg.attachment!.size,
+                                });
+                              }
+                            }}
+                            className="flex items-center justify-between gap-3 p-3 bg-black/10 hover:bg-black/15 rounded-xl cursor-pointer transition-all group/pdf border border-white/10"
+                            title="Click to view PDF document"
+                          >
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <div className="w-8 h-8 rounded-lg bg-red-500/20 flex items-center justify-center text-red-500 flex-shrink-0 group-hover/pdf:scale-105 transition-transform">
+                                <FileText size={18} />
+                              </div>
                               <div className="min-w-0">
-                                <p className="font-bold truncate text-[11px]">{msg.attachment.name}</p>
-                                <p className="text-[9px] opacity-75">
-                                  {msg.attachment.size ? `${(msg.attachment.size / 1024).toFixed(1)} KB • ` : ''}PDF • Auto-deletes in 48h
+                                <p className="font-bold truncate text-[12px] group-hover/pdf:underline">{msg.attachment.name}</p>
+                                <p className="text-[10px] opacity-75">
+                                  {msg.attachment.size ? `${(msg.attachment.size / 1024).toFixed(1)} KB • ` : ''}PDF Document • Auto-deletes in 48h
                                 </p>
                               </div>
                             </div>
-                            <a
-                              href={msg.attachment.url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="px-2.5 py-1 bg-white text-black font-bold rounded-lg text-[10px] flex items-center gap-1 hover:bg-white/90 transition-colors flex-shrink-0"
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setPreviewPdf({
+                                  url: msg.attachment!.url,
+                                  name: msg.attachment!.name,
+                                  size: msg.attachment!.size,
+                                });
+                              }}
+                              className="px-3 py-1.5 bg-white text-black font-bold rounded-lg text-[11px] flex items-center gap-1.5 hover:bg-gray-100 shadow-sm transition-all flex-shrink-0 cursor-pointer"
                             >
-                              <span>View</span>
-                              <ExternalLink size={10} />
-                            </a>
+                              <span>Open PDF</span>
+                              <ExternalLink size={11} />
+                            </button>
                           </div>
                         ) : msg.attachment.type === 'location' ? (
                           /* Location Sharing Preview */
@@ -463,8 +580,20 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
                 </div>
               </div>
             );
-          })
+          })}
+          </>
         )}
+
+        {/* Ended Session Timeline Marker */}
+        {isChatEnded && (
+          <div className="flex items-center justify-center my-3">
+            <div className="flex items-center gap-2 px-4 py-1.5 rounded-full bg-red-50 border border-red-200 text-red-700 text-[11px] font-semibold">
+              <Lock size={12} className="text-red-600" />
+              <span>Chat session terminated by business • No further messages can be sent or received</span>
+            </div>
+          </div>
+        )}
+
         <div ref={messagesEndRef} />
       </div>
 
@@ -481,9 +610,14 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
         )}
 
         {isChatEnded ? (
-          <div className="flex items-center justify-center gap-2 p-3.5 bg-gray-100 rounded-2xl text-xs font-semibold text-gray-500">
-            <Lock size={15} />
-            <span>This conversation has been permanently ended. Messages cannot be sent.</span>
+          <div className="flex flex-col items-center justify-center gap-1 p-3.5 bg-gray-50 border border-gray-200/80 rounded-2xl text-center">
+            <div className="flex items-center gap-1.5 text-xs font-bold text-gray-700">
+              <Lock size={14} className="text-gray-500" />
+              <span>This chat session has been terminated</span>
+            </div>
+            <p className="text-[11px] text-gray-500">
+              Messages can no longer be sent or received on this chat session.
+            </p>
           </div>
         ) : (
           <form
@@ -565,6 +699,27 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
         onClose={() => setIsLocationModalOpen(false)}
         onSendLocation={handleSendLocation}
       />
+
+      {/* Lightbox Modal for Bigger Image View */}
+      {previewImage && (
+        <ImageViewerModal
+          isOpen={!!previewImage}
+          onClose={() => setPreviewImage(null)}
+          imageUrl={previewImage.url}
+          imageName={previewImage.name}
+        />
+      )}
+
+      {/* Embedded PDF Document Viewer Modal */}
+      {previewPdf && (
+        <PdfViewerModal
+          isOpen={!!previewPdf}
+          onClose={() => setPreviewPdf(null)}
+          pdfUrl={previewPdf.url}
+          pdfName={previewPdf.name}
+          pdfSize={previewPdf.size}
+        />
+      )}
     </div>
   );
 };

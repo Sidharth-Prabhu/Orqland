@@ -40,30 +40,30 @@ export const EndChatModal: React.FC<EndChatModalProps> = ({
           </div>
           <div>
             <h3 className="text-base font-bold text-gray-900">
-              Permanently End Chat?
+              End Chat Session?
             </h3>
             <span className="text-[11px] font-semibold text-red-700 bg-red-100/70 px-2 py-0.5 rounded-full inline-block mt-0.5">
-              Permanent Closure & Client History Purge
+              Permanent Session Termination
             </span>
           </div>
         </div>
 
         <div className="space-y-3 mb-6 text-xs text-gray-600 leading-relaxed bg-red-50/50 p-4 rounded-2xl border border-red-100/80">
           <p className="font-bold text-red-900">
-            Warning: This action permanently ends communication with {clientName}:
+            Warning: This action terminates the chat session with {clientName}:
           </p>
           <ul className="space-y-2 list-disc list-inside text-gray-700">
             <li>
-              <strong className="text-gray-900">Permanently terminates</strong> the active communication connection.
+              <strong className="text-gray-900">Permanently terminates</strong> this active chat session.
             </li>
             <li>
-              <strong className="text-gray-900">Prevents both parties</strong> from sending any further messages.
+              <strong className="text-gray-900">Prevents both parties</strong> from sending or receiving any further messages in this session.
             </li>
             <li>
-              <strong className="text-gray-900">Clears client-side history</strong> and associated chat data according to retention rules.
+              The chat composer will be permanently <strong className="text-gray-900">locked</strong> for both the business and the client.
             </li>
             <li>
-              The client <strong className="text-gray-900">cannot restart the conversation</strong>. Any future communication must be initiated afresh by the business.
+              The client <strong className="text-gray-900">cannot restart</strong> this session. To talk to this client again, you can initiate a fresh session at any time.
             </li>
             <li>
               This action <strong className="text-red-700">cannot be undone</strong>.
@@ -87,7 +87,7 @@ export const EndChatModal: React.FC<EndChatModalProps> = ({
             className="flex items-center gap-2 px-5 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold shadow-sm transition-all cursor-pointer disabled:opacity-50"
           >
             <Ban size={14} />
-            <span>{isSubmitting ? 'Ending...' : 'Permanently End Chat'}</span>
+            <span>{isSubmitting ? 'Terminating...' : 'End Chat Session'}</span>
           </button>
         </div>
       </div>

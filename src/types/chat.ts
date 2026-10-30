@@ -49,6 +49,7 @@ export interface ChatMessage {
   isMe?: boolean;
   status?: MessageDeliveryStatus;
   attachment?: ChatAttachment;
+  deletedByBusiness?: boolean;
 }
 
 export type ConversationLifecycleStatus = 'active' | 'ended';

@@ -40,30 +40,30 @@ export const DeleteChatModal: React.FC<DeleteChatModalProps> = ({
           </div>
           <div>
             <h3 className="text-base font-bold text-gray-900">
-              Delete Chat with {clientName}?
+              Delete Chat History?
             </h3>
-            <span className="text-[11px] font-semibold text-amber-700 bg-amber-100/70 px-2 py-0.5 rounded-full inline-block mt-0.5">
-              Affects Business View Only
+            <span className="text-[11px] font-semibold text-amber-800 bg-amber-100/70 px-2.5 py-0.5 rounded-full inline-block mt-0.5">
+              Affects Your Side Only
             </span>
           </div>
         </div>
 
-        <div className="space-y-3 mb-6 text-xs text-gray-600 leading-relaxed bg-gray-50/80 p-4 rounded-2xl border border-gray-100">
-          <p className="font-semibold text-gray-800">
-            Please understand how this action works before proceeding:
+        <div className="space-y-3 mb-6 text-xs text-gray-600 leading-relaxed bg-amber-50/50 p-4 rounded-2xl border border-amber-200/60">
+          <p className="font-bold text-amber-950">
+            Please note how deleting chat history works with {clientName}:
           </p>
-          <ul className="space-y-2 list-disc list-inside text-gray-600">
+          <ul className="space-y-2 list-disc list-inside text-gray-700">
             <li>
-              This action <strong className="text-gray-900">only clears the chat history from your view</strong>.
+              <strong className="text-gray-900">Deletes the conversation history</strong> from your side only.
             </li>
             <li>
-              The conversation and all existing messages <strong className="text-gray-900">remain visible to the client</strong>.
+              The conversation and all existing messages <strong className="text-gray-900">remain visible to {clientName}</strong>.
             </li>
             <li>
-              The communication connection remains <strong className="text-gray-900">active</strong>.
+              The communication connection between you and {clientName} <strong className="text-gray-900">remains active</strong>.
             </li>
             <li>
-              You can start messaging again at any time without creating a new connection.
+              You can <strong className="text-gray-900">start messaging again immediately</strong> without creating a new connection.
             </li>
           </ul>
         </div>

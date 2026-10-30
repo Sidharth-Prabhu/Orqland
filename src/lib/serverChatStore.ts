@@ -157,8 +157,28 @@ export function formatConversationForViewer(conv: Conversation, viewerEmail: str
     'Orqland Business Workspace';
 
   if (isBusiness) {
+    const businessDeletedAt = conv.businessDeletedAt || 0;
+    const baseMessages = businessDeletedAt > 0
+      ? conv.messages.filter((m) => (m.createdAt || 0) > businessDeletedAt)
+      : conv.messages;
+    const visibleMessages = baseMessages.filter((m) => !m.deletedByBusiness);
+
+    const lastMsg = visibleMessages.length > 0
+      ? (visibleMessages[visibleMessages.length - 1].content ||
+          (visibleMessages[visibleMessages.length - 1].attachment
+            ? `[${visibleMessages[visibleMessages.length - 1].attachment?.type.toUpperCase()}]`
+            : ''))
+      : (businessDeletedAt > 0 ? 'Conversation history cleared on your side' : conv.lastMessage);
+
+    const lastMsgTime = visibleMessages.length > 0
+      ? visibleMessages[visibleMessages.length - 1].timestamp
+      : conv.lastMessageTime;
+
     return {
       ...conv,
+      messages: visibleMessages,
+      lastMessage: lastMsg,
+      lastMessageTime: lastMsgTime,
       clientName: effectiveClientName,
       clientAvatar: effectiveClientAvatar,
       unreadCount: conv.unreadByBusiness || 0,
@@ -360,10 +380,11 @@ export const serverChatStore = {
 
     const all = readAll();
 
-    const existingIndex = all.findIndex(
+    const activeExistingIndex = all.findIndex(
       (c) =>
         (c.clientEmail || '').toLowerCase() === normClientEmail &&
-        (c.businessEmail || '').toLowerCase() === normBusinessEmail
+        (c.businessEmail || '').toLowerCase() === normBusinessEmail &&
+        c.status === 'active'
     );
 
     const now = Date.now();
@@ -372,52 +393,50 @@ export const serverChatStore = {
       minute: '2-digit',
     });
 
-    if (existingIndex >= 0) {
-      const existing = all[existingIndex];
+    if (activeExistingIndex >= 0) {
+      const existing = all[activeExistingIndex];
 
-      // If active, restore business visibility and append message
-      if (existing.status === 'active') {
-        const updatedMessages = [...existing.messages];
-        if (initialMessage && initialMessage.trim()) {
-          updatedMessages.push({
-            id: `msg-${now}`,
-            conversationId: existing.id,
-            senderId: normBusinessEmail,
-            senderEmail: normBusinessEmail,
-            senderName: effectiveBusinessName,
-            senderAvatar: effectiveBusinessAvatar,
-            content: initialMessage.trim(),
-            timestamp: timeString,
-            date: 'Today',
-            createdAt: now,
-            status: 'delivered',
-          });
-        }
-
-        const updated: Conversation = {
-          ...existing,
-          clientName: effectiveClientName || existing.clientName,
-          clientAvatar: effectiveClientAvatar || existing.clientAvatar,
-          businessName: effectiveBusinessName || existing.businessName,
-          businessAvatar: effectiveBusinessAvatar || existing.businessAvatar,
-          deletedByBusiness: false,
-          deletedForClient: false,
-          unreadByClient: initialMessage?.trim()
-            ? (existing.unreadByClient || 0) + 1
-            : existing.unreadByClient || 0,
-          lastMessage: initialMessage?.trim() || existing.lastMessage,
-          lastMessageTime: timeString,
-          lastMessageTimestamp: now,
-          messages: updatedMessages,
-        };
-
-        all[existingIndex] = updated;
-        writeAll(all);
-        return formatConversationForViewer(updated, normBusinessEmail);
+      // If active session exists, restore business visibility and append message
+      const updatedMessages = [...existing.messages];
+      if (initialMessage && initialMessage.trim()) {
+        updatedMessages.push({
+          id: `msg-${now}`,
+          conversationId: existing.id,
+          senderId: normBusinessEmail,
+          senderEmail: normBusinessEmail,
+          senderName: effectiveBusinessName,
+          senderAvatar: effectiveBusinessAvatar,
+          content: initialMessage.trim(),
+          timestamp: timeString,
+          date: 'Today',
+          createdAt: now,
+          status: 'delivered',
+        });
       }
+
+      const updated: Conversation = {
+        ...existing,
+        clientName: effectiveClientName || existing.clientName,
+        clientAvatar: effectiveClientAvatar || existing.clientAvatar,
+        businessName: effectiveBusinessName || existing.businessName,
+        businessAvatar: effectiveBusinessAvatar || existing.businessAvatar,
+        deletedByBusiness: false,
+        deletedForClient: false,
+        unreadByClient: initialMessage?.trim()
+          ? (existing.unreadByClient || 0) + 1
+          : existing.unreadByClient || 0,
+        lastMessage: initialMessage?.trim() || existing.lastMessage,
+        lastMessageTime: timeString,
+        lastMessageTimestamp: now,
+        messages: updatedMessages,
+      };
+
+      all[activeExistingIndex] = updated;
+      writeAll(all);
+      return formatConversationForViewer(updated, normBusinessEmail);
     }
 
-    // Create brand new conversation
+    // Otherwise, create a brand new session-based conversation
     const convId = `conv-${now}`;
     const initialMessages: ChatMessage[] = [];
 
@@ -506,7 +525,7 @@ export const serverChatStore = {
     const conv = all[index];
 
     if (conv.status === 'ended') {
-      throw new Error('This chat has been permanently ended. No further messages can be sent.');
+      throw new Error('This chat session has been terminated. No further messages can be sent or received.');
     }
 
     const normSender = senderEmail.trim().toLowerCase();
@@ -593,7 +612,7 @@ export const serverChatStore = {
 
     const updated: Conversation = {
       ...all[index],
-      deletedByBusiness: true,
+      deletedByBusiness: false,
       businessDeletedAt: Date.now(),
     };
 
@@ -601,6 +620,34 @@ export const serverChatStore = {
     writeAll(all);
 
     return formatConversationForViewer(updated, userEmail);
+  },
+
+  deleteMessage(params: {
+    conversationId: string;
+    messageId: string;
+    userEmail: string;
+  }): Conversation {
+    const { conversationId, messageId, userEmail } = params;
+    if (!isBusinessUser(userEmail)) {
+      throw new Error('Permission Denied: Only the Business account can delete messages from their view.');
+    }
+
+    const all = readAll();
+    const index = all.findIndex((c) => c.id === conversationId);
+
+    if (index === -1) {
+      throw new Error('Conversation not found.');
+    }
+
+    const conv = all[index];
+    conv.messages = conv.messages.map((m) =>
+      m.id === messageId ? { ...m, deletedByBusiness: true } : m
+    );
+
+    all[index] = conv;
+    writeAll(all);
+
+    return formatConversationForViewer(conv, userEmail);
   },
 
   endChat(conversationId: string, userEmail: string): Conversation {
@@ -621,8 +668,8 @@ export const serverChatStore = {
       status: 'ended',
       endedAt: now,
       endedBy: userEmail.trim().toLowerCase(),
-      deletedForClient: true,
-      lastMessage: 'This chat was permanently ended by the business.',
+      deletedForClient: false,
+      lastMessage: 'This chat session was ended by the business.',
       lastMessageTime: new Date(now).toLocaleTimeString([], {
         hour: '2-digit',
         minute: '2-digit',

@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Search, MessageSquare, Plus, Lock } from 'lucide-react';
+import { Search, MessageSquare, Plus, Lock, Trash2 } from 'lucide-react';
 import { Conversation } from '@/types/chat';
 import { UserAvatar } from '@/components/ui/UserAvatar';
 
@@ -11,6 +11,7 @@ interface DirectMessagesListProps {
   onSelectConversation: (id: string) => void;
   isBusiness: boolean;
   onOpenStartChat?: () => void;
+  onDeleteConversation?: (id: string) => void;
 }
 
 export const DirectMessagesList: React.FC<DirectMessagesListProps> = ({
@@ -19,6 +20,7 @@ export const DirectMessagesList: React.FC<DirectMessagesListProps> = ({
   onSelectConversation,
   isBusiness,
   onOpenStartChat,
+  onDeleteConversation,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -86,7 +88,7 @@ export const DirectMessagesList: React.FC<DirectMessagesListProps> = ({
               <div
                 key={conv.id}
                 onClick={() => onSelectConversation(conv.id)}
-                className={`relative flex items-start gap-3 px-4 py-3 cursor-pointer transition-colors ${
+                className={`group relative flex items-start gap-3 px-4 py-3 cursor-pointer transition-colors ${
                   isActive
                     ? 'bg-[#f4f6f8]'
                     : 'hover:bg-gray-50/80 bg-white'
@@ -128,9 +130,25 @@ export const DirectMessagesList: React.FC<DirectMessagesListProps> = ({
                         </span>
                       )}
                     </div>
-                    <span className="text-[11px] text-gray-400 flex-shrink-0 font-normal">
-                      {conv.lastMessageTime}
-                    </span>
+                    <div className="flex items-center gap-1">
+                      <span className="text-[11px] text-gray-400 flex-shrink-0 font-normal">
+                        {conv.lastMessageTime}
+                      </span>
+                      {/* Delete this chat separately button (Business only) */}
+                      {isBusiness && onDeleteConversation && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onDeleteConversation(conv.id);
+                          }}
+                          className="opacity-0 group-hover:opacity-100 p-0.5 text-gray-400 hover:text-amber-700 hover:bg-amber-100/70 rounded transition-all cursor-pointer"
+                          title={`Delete chat with ${conv.participant.name}`}
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      )}
+                    </div>
                   </div>
 
                   <div className="flex items-start justify-between gap-2">

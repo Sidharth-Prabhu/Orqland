@@ -2,15 +2,20 @@
 
 import React from 'react';
 import { Conversation } from '@/types/chat';
-import { ShieldCheck, Clock, Lock, CheckCircle2 } from 'lucide-react';
+import { ShieldCheck, Clock, Lock, CheckCircle2, Ban, Trash2 } from 'lucide-react';
 
 interface DetailsSidebarProps {
   conversation: Conversation;
   isBusiness?: boolean;
+  onEndChat?: () => void;
+  onDeleteChat?: () => void;
 }
 
 export const DetailsSidebar: React.FC<DetailsSidebarProps> = ({
   conversation,
+  isBusiness = false,
+  onEndChat,
+  onDeleteChat,
 }) => {
   const { workspaceInfo, bookingInfo, status } = conversation;
   const isEnded = status === 'ended';
@@ -20,26 +25,52 @@ export const DetailsSidebar: React.FC<DetailsSidebarProps> = ({
       {/* Chat Lifecycle Status Card */}
       <div className="bg-white rounded-2xl border border-gray-200/90 p-4 shadow-[0_1px_3px_rgba(0,0,0,0.02)]">
         <div className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-1.5">
-          Chat Connection Status
+          Chat Session Status
         </div>
         <div className="flex items-center gap-2">
           {isEnded ? (
             <div className="flex items-center gap-1.5 text-red-700 bg-red-50 border border-red-200 px-2.5 py-1 rounded-xl text-xs font-bold">
               <Lock size={12} />
-              <span>Permanently Ended</span>
+              <span>Session Terminated</span>
             </div>
           ) : (
             <div className="flex items-center gap-1.5 text-green-700 bg-green-50 border border-green-200 px-2.5 py-1 rounded-xl text-xs font-bold">
               <CheckCircle2 size={12} />
-              <span>Active Connection</span>
+              <span>Active Session</span>
             </div>
           )}
         </div>
         <p className="text-[11px] text-gray-500 mt-2 leading-relaxed">
           {isEnded
-            ? 'Communication connection has been permanently closed by the business.'
-            : 'Connection is active. Both parties can exchange messages and permitted attachments.'}
+            ? 'This chat session has been terminated by the business. Messages can no longer be sent or received.'
+            : 'Session is active. Both parties can exchange messages, approved files, and location.'}
         </p>
+
+        {/* Business End Chat Action Button */}
+        {isBusiness && !isEnded && onEndChat && (
+          <button
+            type="button"
+            onClick={onEndChat}
+            className="w-full mt-3 flex items-center justify-center gap-1.5 px-3 py-2 bg-red-50 hover:bg-red-100 border border-red-200 text-red-700 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-2xs"
+            title="Terminate this chat session"
+          >
+            <Ban size={13} className="text-red-500" />
+            <span>End Chat Session</span>
+          </button>
+        )}
+
+        {/* Business Clear History Action Button */}
+        {isBusiness && onDeleteChat && (
+          <button
+            type="button"
+            onClick={onDeleteChat}
+            className="w-full mt-2 flex items-center justify-center gap-1.5 px-3 py-2 bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-800 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-2xs"
+            title="Clear conversation history from your view only"
+          >
+            <Trash2 size={13} className="text-amber-600" />
+            <span>Delete My History</span>
+          </button>
+        )}
       </div>
 
       {/* Orqspace Info Card */}

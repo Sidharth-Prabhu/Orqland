@@ -2,14 +2,24 @@
 
 import React, { useState, useRef } from 'react';
 import Image from 'next/image';
-import { Paperclip, X, AlertTriangle, FileText, UploadCloud, AlertCircle } from 'lucide-react';
+import { Paperclip, X, AlertTriangle, FileText, UploadCloud, AlertCircle, Plus } from 'lucide-react';
 import { validateAttachmentFile } from '@/lib/security';
 import { ChatAttachment } from '@/types/chat';
 
 interface AttachmentModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSendAttachment: (attachment: ChatAttachment, optionalText?: string) => Promise<void>;
+  onSendAttachment: (
+    attachment: ChatAttachment,
+    optionalText?: string,
+    attachments?: ChatAttachment[]
+  ) => Promise<void>;
+}
+
+interface SelectedItem {
+  file: File;
+  previewUrl: string;
+  type: 'image' | 'pdf';
 }
 
 function buildFileAttachment(
@@ -36,38 +46,61 @@ export const AttachmentModal: React.FC<AttachmentModalProps> = ({
   onSendAttachment,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [fileType, setFileType] = useState<'image' | 'pdf' | null>(null);
+  const [items, setItems] = useState<SelectedItem[]>([]);
   const [caption, setCaption] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFiles = (fileList: FileList | null) => {
+    if (!fileList || fileList.length === 0) return;
     setError(null);
-    const file = e.target.files?.[0];
-    if (!file) return;
 
-    const validation = validateAttachmentFile(file);
-    if (!validation.valid) {
-      setError(validation.error || 'Invalid file format.');
+    const newFiles = Array.from(fileList);
+    const existingCount = items.length;
+
+    if (existingCount + newFiles.length > 6) {
+      setError('You can select a maximum of 6 pictures at once.');
       return;
     }
 
-    setSelectedFile(file);
-    setFileType(validation.attachmentType === 'pdf' ? 'pdf' : 'image');
+    const validatedItems: SelectedItem[] = [];
 
-    if (validation.attachmentType === 'image') {
-      const url = URL.createObjectURL(file);
-      setPreviewUrl(url);
-    } else {
-      setPreviewUrl(null);
+    for (const file of newFiles) {
+      const validation = validateAttachmentFile(file);
+      if (!validation.valid) {
+        setError(validation.error || 'Invalid file format. Please upload JPG, PNG, WebP or PDF.');
+        return;
+      }
+      const type = validation.attachmentType === 'pdf' ? 'pdf' : 'image';
+      const previewUrl = type === 'image' ? URL.createObjectURL(file) : '';
+      validatedItems.push({ file, previewUrl, type });
+    }
+
+    setItems((prev) => [...prev, ...validatedItems]);
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    handleFiles(e.target.files);
+    // Reset input value so same files can be re-selected if removed
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
     }
   };
 
+  const handleRemoveItem = (index: number) => {
+    setItems((prev) => {
+      const itemToRemove = prev[index];
+      if (itemToRemove && itemToRemove.previewUrl) {
+        URL.revokeObjectURL(itemToRemove.previewUrl);
+      }
+      return prev.filter((_, i) => i !== index);
+    });
+    setError(null);
+  };
+
   const handleSend = async () => {
-    if (!selectedFile || !fileType) {
-      setError('Please select a file to send.');
+    if (items.length === 0) {
+      setError('Please select at least one picture or file.');
       return;
     }
 
@@ -75,21 +108,25 @@ export const AttachmentModal: React.FC<AttachmentModalProps> = ({
     setError(null);
 
     try {
-      // Read file into Data URL for storage
-      const reader = new FileReader();
-      reader.onload = async () => {
-        const base64Data = reader.result as string;
-        const attachment = buildFileAttachment(selectedFile, base64Data, fileType);
-        await onSendAttachment(attachment, caption);
-        handleClose();
-      };
+      // Read all files as Base64 asynchronously
+      const readPromises = items.map(
+        (item) =>
+          new Promise<ChatAttachment>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => {
+              const base64Data = reader.result as string;
+              resolve(buildFileAttachment(item.file, base64Data, item.type));
+            };
+            reader.onerror = () => reject(new Error(`Failed to read file ${item.file.name}`));
+            reader.readAsDataURL(item.file);
+          })
+      );
 
-      reader.onerror = () => {
-        setError('Failed to read file. Please try again.');
-        setIsUploading(false);
-      };
+      const attachments = await Promise.all(readPromises);
 
-      reader.readAsDataURL(selectedFile);
+      // Primary attachment is the first item, full list is in attachments batch
+      await onSendAttachment(attachments[0], caption, attachments);
+      handleClose();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Upload failed.');
       setIsUploading(false);
@@ -97,9 +134,13 @@ export const AttachmentModal: React.FC<AttachmentModalProps> = ({
   };
 
   const handleClose = () => {
-    setSelectedFile(null);
-    setPreviewUrl(null);
-    setFileType(null);
+    // Revoke any created object URLs
+    items.forEach((item) => {
+      if (item.previewUrl) {
+        URL.revokeObjectURL(item.previewUrl);
+      }
+    });
+    setItems([]);
     setCaption('');
     setError(null);
     setIsUploading(false);
@@ -111,12 +152,12 @@ export const AttachmentModal: React.FC<AttachmentModalProps> = ({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
       <div
-        className="relative w-full max-w-lg bg-white rounded-3xl shadow-2xl border border-gray-100 overflow-hidden p-6 sm:p-7"
+        className="relative w-full max-w-xl bg-white rounded-3xl shadow-2xl border border-gray-100 overflow-hidden p-6 sm:p-7"
         onClick={(e) => e.stopPropagation()}
       >
         <button
           onClick={handleClose}
-          className="absolute top-4 right-4 p-2 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-full transition-colors"
+          className="absolute top-4 right-4 p-2 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-full transition-colors cursor-pointer"
           aria-label="Close"
         >
           <X size={18} />
@@ -128,23 +169,20 @@ export const AttachmentModal: React.FC<AttachmentModalProps> = ({
           </div>
           <div>
             <h3 className="text-base font-bold text-gray-900">
-              Share File Attachment
+              Share Pictures & Files
             </h3>
             <p className="text-xs text-gray-500">
-              Supports Images (JPG, PNG, WebP) and PDF documents only.
+              Select up to 6 pictures at once. Supports Images (JPG, PNG, WebP) and PDF documents.
             </p>
           </div>
         </div>
 
-        {/* 48-Hour Auto-Deletion Warning Alert */}
-        <div className="mb-4 p-3.5 bg-amber-50 border border-amber-200/80 rounded-2xl flex items-start gap-2.5 text-xs text-amber-800 leading-relaxed">
-          <AlertTriangle size={17} className="text-amber-600 flex-shrink-0 mt-0.5" />
-          <div className="flex-1">
-            <strong className="block font-bold mb-0.5 text-amber-900">
-              Automatic 48-Hour Permanent Deletion
-            </strong>
-            All shared images and PDF documents are automatically and permanently deleted after 48 hours from upload. Please do not share files that require permanent retention.
-          </div>
+        {/* 48-Hour Auto-Deletion Compact Warning Alert */}
+        <div className="mb-4 px-3 py-2 bg-amber-50/90 border border-amber-200/80 rounded-xl flex items-center gap-2 text-[11px] text-amber-900">
+          <AlertTriangle size={14} className="text-amber-600 flex-shrink-0" />
+          <span className="leading-tight">
+            <strong>48-Hour Retention:</strong> Shared files are automatically deleted after 48 hours.
+          </span>
         </div>
 
         {error && (
@@ -154,16 +192,17 @@ export const AttachmentModal: React.FC<AttachmentModalProps> = ({
           </div>
         )}
 
-        {/* File Dropzone / Picker */}
+        {/* Hidden Multiple File Input */}
         <input
           type="file"
           ref={fileInputRef}
           onChange={handleFileChange}
+          multiple
           accept=".jpg,.jpeg,.png,.webp,.pdf,image/jpeg,image/png,image/webp,application/pdf"
           className="hidden"
         />
 
-        {!selectedFile ? (
+        {items.length === 0 ? (
           <div
             onClick={() => fileInputRef.current?.click()}
             className="border-2 border-dashed border-gray-200 hover:border-blue-400 rounded-2xl p-8 flex flex-col items-center justify-center text-center cursor-pointer transition-colors bg-gray-50/50 hover:bg-blue-50/20 mb-4"
@@ -175,64 +214,89 @@ export const AttachmentModal: React.FC<AttachmentModalProps> = ({
               Click to browse your device
             </p>
             <p className="text-[11px] text-gray-400 mt-1">
-              JPG, JPEG, PNG, WebP, or PDF (Max 10 MB)
+              Select up to 6 pictures at once (Max 10 MB per file)
             </p>
           </div>
         ) : (
-          <div className="mb-4 p-4 rounded-2xl bg-gray-50 border border-gray-200/80">
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2.5">
-                {fileType === 'image' ? (
-                  <div className="w-10 h-10 rounded-lg overflow-hidden bg-gray-200 flex-shrink-0 relative">
-                    {previewUrl && (
-                      <Image
-                        src={previewUrl}
-                        alt="Preview"
-                        fill
-                        className="object-cover"
-                        unoptimized
-                      />
-                    )}
-                  </div>
-                ) : (
-                  <div className="w-10 h-10 rounded-lg bg-red-100 text-red-600 flex items-center justify-center flex-shrink-0">
-                    <FileText size={20} />
-                  </div>
-                )}
-                <div className="min-w-0">
-                  <p className="text-xs font-bold text-gray-900 truncate max-w-[240px]">
-                    {selectedFile.name}
-                  </p>
-                  <p className="text-[11px] text-gray-400">
-                    {(selectedFile.size / 1024).toFixed(1)} KB • {fileType?.toUpperCase()}
-                  </p>
-                </div>
-              </div>
+          <div className="mb-4 p-3.5 rounded-2xl bg-gray-50 border border-gray-200/80">
+            {/* Header / Counter */}
+            <div className="flex items-center justify-between mb-2.5 px-0.5">
+              <span className="text-xs font-bold text-gray-700">
+                Selected ({items.length}/6)
+              </span>
               <button
                 type="button"
-                onClick={() => {
-                  setSelectedFile(null);
-                  setPreviewUrl(null);
-                  setFileType(null);
-                }}
-                className="text-xs font-semibold text-gray-500 hover:text-red-600"
+                onClick={() => setItems([])}
+                className="text-[11px] font-semibold text-gray-400 hover:text-red-600 transition-colors cursor-pointer"
               >
-                Change
+                Clear all
               </button>
             </div>
 
+            {/* Horizontal Grid in Single Line with Horizontal Scroll */}
+            <div className="flex items-center gap-2.5 overflow-x-auto py-1 scrollbar-thin scrollbar-thumb-gray-200">
+              {items.map((item, index) => (
+                <div
+                  key={index}
+                  className="relative flex-shrink-0 w-20 h-20 sm:w-22 sm:h-22 rounded-xl overflow-hidden bg-white border border-gray-200 shadow-2xs group"
+                >
+                  {item.type === 'image' ? (
+                    <Image
+                      src={item.previewUrl}
+                      alt="Selected picture"
+                      fill
+                      className="object-cover"
+                      unoptimized
+                    />
+                  ) : (
+                    <div className="w-full h-full flex flex-col items-center justify-center bg-red-50 text-red-600 p-2">
+                      <FileText size={24} />
+                      <span className="text-[9px] font-bold mt-1 text-red-700 truncate max-w-full">
+                        PDF
+                      </span>
+                    </div>
+                  )}
+
+                  {/* Remove Button on Top Right */}
+                  <button
+                    type="button"
+                    onClick={() => handleRemoveItem(index)}
+                    className="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/70 hover:bg-red-600 text-white flex items-center justify-center transition-colors shadow-sm cursor-pointer"
+                    title="Remove picture"
+                  >
+                    <X size={11} strokeWidth={2.5} />
+                  </button>
+                </div>
+              ))}
+
+              {/* Plus (+) Button to Add More Pictures up to 6 */}
+              {items.length < 6 && (
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="flex-shrink-0 w-20 h-20 sm:w-22 sm:h-22 rounded-xl border-2 border-dashed border-gray-300 hover:border-blue-500 hover:bg-blue-50/40 text-gray-400 hover:text-blue-600 flex flex-col items-center justify-center gap-1 transition-all cursor-pointer group"
+                  title="Add more pictures"
+                >
+                  <Plus size={20} className="group-hover:scale-110 transition-transform" />
+                  <span className="text-[10px] font-semibold">Add more</span>
+                </button>
+              )}
+            </div>
+
             {/* Optional Caption */}
-            <input
-              type="text"
-              value={caption}
-              onChange={(e) => setCaption(e.target.value)}
-              placeholder="Add an optional message or note..."
-              className="w-full px-3 py-2 bg-white border border-gray-200 rounded-xl text-xs text-gray-900 focus:outline-none focus:ring-1 focus:ring-black"
-            />
+            <div className="mt-3 pt-2.5 border-t border-gray-200/70">
+              <input
+                type="text"
+                value={caption}
+                onChange={(e) => setCaption(e.target.value)}
+                placeholder="Add an optional message or note..."
+                className="w-full px-3.5 py-2 bg-white border border-gray-200 rounded-xl text-xs text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500 transition-all"
+              />
+            </div>
           </div>
         )}
 
-        <div className="flex items-center justify-end gap-3 pt-2">
+        <div className="flex items-center justify-end gap-3 pt-1">
           <button
             type="button"
             onClick={handleClose}
@@ -244,10 +308,10 @@ export const AttachmentModal: React.FC<AttachmentModalProps> = ({
           <button
             type="button"
             onClick={handleSend}
-            disabled={!selectedFile || isUploading}
+            disabled={items.length === 0 || isUploading}
             className="px-5 py-2.5 bg-black hover:bg-gray-800 text-white rounded-xl text-xs font-bold shadow-sm transition-all cursor-pointer disabled:opacity-40"
           >
-            {isUploading ? 'Sending...' : 'Send Attachment'}
+            {isUploading ? 'Sending...' : items.length > 1 ? `Send ${items.length} Pictures` : 'Send Picture'}
           </button>
         </div>
       </div>

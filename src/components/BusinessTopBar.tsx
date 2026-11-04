@@ -1,23 +1,28 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Mail, ExternalLink, Copy, Check } from 'lucide-react';
+import { ExternalLink, Copy, Check } from 'lucide-react';
 import { UserProfile } from '@/types/chat';
 import { UserMenu } from '@/components/auth/UserMenu';
 import { UserAvatar } from '@/components/ui/UserAvatar';
+import { MailNotificationMenu, NotificationItem } from '@/components/chat/MailNotificationMenu';
 
 interface BusinessTopBarProps {
   business: UserProfile;
   unreadCount?: number;
   onMailClick?: () => void;
   onOpenAuthModal?: () => void;
+  notifications?: NotificationItem[];
+  onSelectNotification?: (conversationId: string) => void;
+  onClearNotifications?: () => void;
 }
 
 export const BusinessTopBar: React.FC<BusinessTopBarProps> = ({
   business,
-  unreadCount = 1,
-  onMailClick,
   onOpenAuthModal,
+  notifications = [],
+  onSelectNotification = () => {},
+  onClearNotifications = () => {},
 }) => {
   const [copied, setCopied] = useState(false);
   const [status, setStatus] = useState<'Closed' | 'Open'>(
@@ -37,47 +42,35 @@ export const BusinessTopBar: React.FC<BusinessTopBarProps> = ({
   };
 
   return (
-    <div className="w-full bg-white">
-      {/* Top breadcrumb label as seen in Image 2 */}
-      <div className="text-[13px] text-gray-400 font-normal px-8 pt-2.5 pb-1 select-none bg-white">
-        Orders & Bookings
+    <header className="w-full bg-[#f6f7f9] border-b border-gray-200/80 px-4 sm:px-8 py-2.5 sm:py-3.5 flex items-center justify-between">
+      {/* Left: Brand Logo */}
+      <div className="flex items-center select-none cursor-pointer">
+        <span className="text-[24px] sm:text-[28px] font-extrabold tracking-tight text-black font-sans">
+          Orqland
+        </span>
       </div>
 
-      {/* Main Business Top Navigation Bar */}
-      <header className="w-full bg-[#f6f7f9] border-b border-gray-200/80 px-8 py-3.5 flex items-center justify-between">
-        {/* Left: Brand Logo */}
-        <div className="flex items-center select-none cursor-pointer">
-          <span className="text-[28px] font-extrabold tracking-tight text-black font-sans">
-            Orqland
-          </span>
-        </div>
-
         {/* Right Section: Messages notification & Business profile */}
-        <div className="flex items-center gap-5">
-          {/* Mail Icon Button with Notification Dot */}
-          <button
-            onClick={onMailClick}
-            className="relative p-2.5 rounded-xl bg-[#eceef1] hover:bg-gray-200 text-black transition-colors shadow-sm cursor-pointer"
-            title="Messages"
-          >
-            <Mail size={19} strokeWidth={2.2} />
-            {unreadCount > 0 && (
-              <span className="w-2.5 h-2.5 rounded-full bg-[#2563eb] absolute -top-0.5 -right-0.5 ring-2 ring-[#f6f7f9]" />
-            )}
-          </button>
+        <div className="flex items-center gap-2 sm:gap-5">
+          {/* Mail Icon Button with Notification Dropdown */}
+          <MailNotificationMenu
+            notifications={notifications}
+            onSelectNotification={onSelectNotification}
+            onClearAll={onClearNotifications}
+          />
 
           {/* Vertical Divider */}
-          <div className="h-9 w-[1px] bg-gray-300/80" />
+          <div className="h-7 sm:h-9 w-[1px] bg-gray-300/80" />
 
           {/* Business Profile Info */}
-          <div className="flex items-center gap-3.5">
+          <div className="flex items-center gap-2 sm:gap-3.5">
             <div className="flex flex-col items-end">
-              <span className="text-[17px] font-bold text-black leading-tight">
+              <span className="text-xs sm:text-[17px] font-bold text-black leading-tight truncate max-w-[110px] sm:max-w-[200px] md:max-w-none">
                 {business.name}
               </span>
 
               {/* WSID Pill & Status row */}
-              <div className="flex items-center gap-2 mt-1">
+              <div className="hidden sm:flex items-center gap-2 mt-1">
                 {/* WSID Pill */}
                 <div className="inline-flex items-center gap-1 px-2 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-semibold text-gray-700 shadow-sm">
                   <span>WSID: {business.wsid || 'ABC#12345678#'}</span>
@@ -112,20 +105,19 @@ export const BusinessTopBar: React.FC<BusinessTopBarProps> = ({
             </div>
 
             {/* Business Avatar */}
-            <div className="relative w-11 h-11 rounded-full overflow-hidden ring-2 ring-white shadow-sm flex-shrink-0">
+            <div className="relative w-9 h-9 sm:w-11 sm:h-11 rounded-full overflow-hidden ring-2 ring-white shadow-sm flex-shrink-0">
               <UserAvatar
                 src={business.avatar}
                 name={business.name}
-                size={44}
+                size={40}
               />
             </div>
           </div>
 
           {/* User Account / Auth Trigger */}
-          <div className="h-7 w-[1px] bg-gray-300/80" />
+          <div className="h-6 sm:h-7 w-[1px] bg-gray-300/80" />
           <UserMenu onOpenAuthModal={onOpenAuthModal || (() => {})} variant="business" />
         </div>
       </header>
-    </div>
   );
 };

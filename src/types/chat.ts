@@ -49,6 +49,7 @@ export interface ChatMessage {
   isMe?: boolean;
   status?: MessageDeliveryStatus;
   attachment?: ChatAttachment;
+  attachments?: ChatAttachment[];
   deletedByBusiness?: boolean;
 }
 

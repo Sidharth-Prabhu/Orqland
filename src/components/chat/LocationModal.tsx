@@ -39,7 +39,8 @@ export const LocationModal: React.FC<LocationModalProps> = ({
   onSendLocation,
 }) => {
   const [label, setLabel] = useState('');
-  const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [latInput, setLatInput] = useState('');
+  const [lngInput, setLngInput] = useState('');
   const [isLocating, setIsLocating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
@@ -54,10 +55,10 @@ export const LocationModal: React.FC<LocationModalProps> = ({
     setIsLocating(true);
     navigator.geolocation.getCurrentPosition(
       (pos) => {
-        setCoords({
-          lat: Number(pos.coords.latitude.toFixed(6)),
-          lng: Number(pos.coords.longitude.toFixed(6)),
-        });
+        const lat = Number(pos.coords.latitude.toFixed(6));
+        const lng = Number(pos.coords.longitude.toFixed(6));
+        setLatInput(String(lat));
+        setLngInput(String(lng));
         if (!label) {
           setLabel('My Current Location');
         }
@@ -65,7 +66,7 @@ export const LocationModal: React.FC<LocationModalProps> = ({
       },
       (err) => {
         console.error('Geolocation error:', err);
-        setError('Could not access current location. Please verify location permissions or enter coordinates.');
+        setError('Could not access current location. Please verify location permissions or enter coordinates manually.');
         setIsLocating(false);
       },
       { timeout: 10000, enableHighAccuracy: true }
@@ -74,14 +75,27 @@ export const LocationModal: React.FC<LocationModalProps> = ({
 
   const handleSend = async () => {
     setError(null);
-    if (!coords) {
-      setError('Please detect or provide location coordinates.');
+    const lat = parseFloat(latInput.trim());
+    const lng = parseFloat(lngInput.trim());
+
+    if (isNaN(lat) || isNaN(lng)) {
+      setError('Please detect your location or enter valid numerical coordinates.');
+      return;
+    }
+
+    if (lat < -90 || lat > 90) {
+      setError('Latitude must be between -90 and 90 degrees.');
+      return;
+    }
+
+    if (lng < -180 || lng > 180) {
+      setError('Longitude must be between -180 and 180 degrees.');
       return;
     }
 
     setIsSending(true);
     try {
-      const attachment = createLocationAttachment(coords, label);
+      const attachment = createLocationAttachment({ lat, lng }, label);
       await onSendLocation(attachment);
       handleClose();
     } catch (err: unknown) {
@@ -93,11 +107,14 @@ export const LocationModal: React.FC<LocationModalProps> = ({
 
   const handleClose = () => {
     setLabel('');
-    setCoords(null);
+    setLatInput('');
+    setLngInput('');
     setError(null);
     setIsSending(false);
     onClose();
   };
+
+  const hasValidCoords = !isNaN(parseFloat(latInput)) && !isNaN(parseFloat(lngInput));
 
   if (!isOpen) return null;
 
@@ -176,36 +193,26 @@ export const LocationModal: React.FC<LocationModalProps> = ({
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-semibold text-gray-700 mb-1">
-                Latitude
+                Latitude (-90 to 90)
               </label>
               <input
                 type="number"
-                step="0.000001"
-                value={coords?.lat || ''}
-                onChange={(e) =>
-                  setCoords((prev) => ({
-                    lat: parseFloat(e.target.value) || 0,
-                    lng: prev?.lng || 0,
-                  }))
-                }
+                step="any"
+                value={latInput}
+                onChange={(e) => setLatInput(e.target.value)}
                 placeholder="e.g. 13.0827"
                 className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-xs text-gray-900 focus:outline-none focus:ring-1 focus:ring-black"
               />
             </div>
             <div>
               <label className="block text-xs font-semibold text-gray-700 mb-1">
-                Longitude
+                Longitude (-180 to 180)
               </label>
               <input
                 type="number"
-                step="0.000001"
-                value={coords?.lng || ''}
-                onChange={(e) =>
-                  setCoords((prev) => ({
-                    lat: prev?.lat || 0,
-                    lng: parseFloat(e.target.value) || 0,
-                  }))
-                }
+                step="any"
+                value={lngInput}
+                onChange={(e) => setLngInput(e.target.value)}
                 placeholder="e.g. 80.2707"
                 className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-xs text-gray-900 focus:outline-none focus:ring-1 focus:ring-black"
               />
@@ -225,7 +232,7 @@ export const LocationModal: React.FC<LocationModalProps> = ({
           <button
             type="button"
             onClick={handleSend}
-            disabled={!coords || isSending}
+            disabled={!hasValidCoords || isSending}
             className="px-5 py-2.5 bg-black hover:bg-gray-800 text-white rounded-xl text-xs font-bold shadow-sm transition-all cursor-pointer disabled:opacity-40"
           >
             {isSending ? 'Sharing...' : 'Share Location'}

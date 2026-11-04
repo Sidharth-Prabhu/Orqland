@@ -1,19 +1,91 @@
 import { Conversation, ChatMessage, ChatAttachment } from '@/types/chat';
 
-const STORAGE_KEY = 'orqland_conversations_cache_v2';
 const CHANNEL_NAME = 'orqland_chat_channel';
+const STORAGE_PREFIX = 'orqland_cache_v4_';
+const TAB_ID = typeof window !== 'undefined' ? Math.random().toString(36).slice(2, 10) : 'server';
 
-// In-memory fallback
-let inMemoryConversations: Conversation[] = [];
+// In-memory cache per user email for instantaneous 0ms access
+const inMemoryCache: Record<string, Conversation[]> = {};
+const activeSubscribers = new Map<string, Set<(conversations: Conversation[]) => void>>();
 
-// Helper to broadcast events across tabs
+function notifyLocalSubscribers(email: string, conversations: Conversation[]) {
+  const norm = (email || '').trim().toLowerCase();
+  const set = activeSubscribers.get(norm);
+  if (set) {
+    set.forEach((cb) => {
+      try {
+        cb(conversations);
+      } catch {
+        // Ignore subscriber error
+      }
+    });
+  }
+}
+
+function getStorageKey(email?: string | null): string {
+  const norm = (email || '').trim().toLowerCase();
+  return `${STORAGE_PREFIX}${norm || 'default'}`;
+}
+
+// Purge any bloated legacy cache entries (>1MB) from localStorage to keep browser quota clean
+function purgeBloatedLocalStorage() {
+  if (typeof window === 'undefined') return;
+  try {
+    const keysToRemove: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (
+        k &&
+        (k.startsWith('orqland_conversations_cache') ||
+          k.startsWith('orqland_chat_cache'))
+      ) {
+        keysToRemove.push(k);
+      }
+    }
+    keysToRemove.forEach((k) => {
+      try {
+        localStorage.removeItem(k);
+      } catch {
+        // Ignore
+      }
+    });
+  } catch {
+    // Ignore
+  }
+}
+
+if (typeof window !== 'undefined') {
+  purgeBloatedLocalStorage();
+}
+
+// Strip massive base64 payloads (>1KB) for localStorage to stay safely within browser quota (~12KB total)
+function sanitizeForLocalStorage(convs: Conversation[]): Conversation[] {
+  return convs.map((c) => ({
+    ...c,
+    messages: c.messages.map((m) => {
+      if (m.attachment && m.attachment.url && m.attachment.type !== 'location') {
+        if (m.attachment.url.length > 1024) {
+          return {
+            ...m,
+            attachment: {
+              ...m.attachment,
+              url: '', // strip giant base64 payload in localStorage; memory cache & server API retain full URL
+            },
+          };
+        }
+      }
+      return m;
+    }),
+  }));
+}
+
+// Helper to broadcast events across other tabs via BroadcastChannel (never loops within the same tab)
 function notifyCrossTab() {
   if (typeof window !== 'undefined') {
     try {
-      window.dispatchEvent(new Event('orqland_chat_updated'));
       if ('BroadcastChannel' in window) {
         const bc = new BroadcastChannel(CHANNEL_NAME);
-        bc.postMessage({ type: 'CHAT_UPDATED', timestamp: Date.now() });
+        bc.postMessage({ type: 'CHAT_UPDATED', senderTabId: TAB_ID, timestamp: Date.now() });
         bc.close();
       }
     } catch {
@@ -22,29 +94,41 @@ function notifyCrossTab() {
   }
 }
 
-// Load cached conversations
-function loadCachedConversations(): Conversation[] {
-  if (typeof window === 'undefined') return inMemoryConversations;
+// Load cached conversations (instant 0ms response on page refresh)
+function loadCachedConversations(email?: string | null): Conversation[] {
+  const norm = (email || '').trim().toLowerCase() || 'default';
+  if (inMemoryCache[norm] && inMemoryCache[norm].length > 0) {
+    return inMemoryCache[norm];
+  }
+  if (typeof window === 'undefined') return [];
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(getStorageKey(email));
     if (!raw) return [];
-    return JSON.parse(raw);
-  } catch (err) {
-    console.error('Failed to load cached conversations:', err);
-    return inMemoryConversations;
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed) && parsed.length > 0) {
+      inMemoryCache[norm] = parsed;
+      return parsed;
+    }
+    return [];
+  } catch {
+    return [];
   }
 }
 
-// Save cached conversations
-function saveCachedConversations(conversations: Conversation[]) {
-  inMemoryConversations = conversations;
+// Save cached conversations (updates inMemoryCache and persists lightweight compact version to localStorage)
+function saveCachedConversations(conversations: Conversation[], email?: string | null) {
+  const norm = (email || '').trim().toLowerCase() || 'default';
+  inMemoryCache[norm] = conversations;
   if (typeof window !== 'undefined') {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(conversations));
-      notifyCrossTab();
-    } catch (err) {
-      console.error('Failed to save cached conversations:', err);
+      const compact = sanitizeForLocalStorage(conversations);
+      localStorage.setItem(getStorageKey(email), JSON.stringify(compact));
+    } catch {
+      // If localStorage is disabled or full, in-memory cache handles it
     }
+  }
+  if (email) {
+    notifyLocalSubscribers(email, conversations);
   }
 }
 
@@ -77,34 +161,35 @@ export const chatService = {
    */
   async fetchConversations(userEmail: string): Promise<Conversation[]> {
     if (!userEmail) return [];
+    const email = userEmail.trim().toLowerCase();
     try {
-      const res = await fetch(`/api/chat/list?email=${encodeURIComponent(userEmail.trim())}`, {
+      const res = await fetch(`/api/chat/list?email=${encodeURIComponent(email)}`, {
         cache: 'no-store',
       });
-      if (!res.ok) return loadCachedConversations();
+      if (!res.ok) return loadCachedConversations(email);
       const data = await res.json();
       if (Array.isArray(data.conversations)) {
-        saveCachedConversations(data.conversations);
+        saveCachedConversations(data.conversations, email);
         return data.conversations;
       }
-      return loadCachedConversations();
+      return loadCachedConversations(email);
     } catch (err) {
       console.error('Failed to fetch conversations from server:', err);
-      return loadCachedConversations();
+      return loadCachedConversations(email);
     }
   },
 
   /**
-   * Only the Business can initiate a chat with a Client.
+   * Clients initiate a chat with a Business.
    * Calls /api/chat/initiate on server and updates local state.
    */
   async initiateChat(params: {
+    clientEmail: string;
+    clientName?: string;
+    clientAvatar?: string;
     businessEmail: string;
     businessName: string;
-    businessAvatar: string;
-    clientEmail: string;
-    clientName: string;
-    clientAvatar?: string;
+    businessAvatar?: string;
     workspaceName?: string;
     initialMessage?: string;
   }): Promise<Conversation> {
@@ -122,8 +207,8 @@ export const chatService = {
     const createdConv: Conversation = data.conversation;
 
     // Optimistically update cache
-    const current = loadCachedConversations().filter((c) => c.id !== createdConv.id);
-    saveCachedConversations([createdConv, ...current]);
+    const current = loadCachedConversations(params.clientEmail).filter((c) => c.id !== createdConv.id);
+    saveCachedConversations([createdConv, ...current], params.clientEmail);
 
     return createdConv;
   },
@@ -138,6 +223,7 @@ export const chatService = {
     senderAvatar: string;
     content: string;
     attachment?: ChatAttachment;
+    attachments?: ChatAttachment[];
   }): Promise<{ message: ChatMessage; conversation: Conversation }> {
     const {
       conversationId,
@@ -146,6 +232,7 @@ export const chatService = {
       senderAvatar,
       content,
       attachment,
+      attachments,
     } = params;
 
     // Optimistic UI update
@@ -163,20 +250,22 @@ export const chatService = {
       createdAt: now,
       status: 'sending',
       attachment,
+      attachments,
     };
 
-    const currentConvs = loadCachedConversations();
+    const currentConvs = loadCachedConversations(senderEmail);
     const targetIdx = currentConvs.findIndex((c) => c.id === conversationId);
     if (targetIdx >= 0) {
       const conv = currentConvs[targetIdx];
       const updatedMessages = [...conv.messages, optimisticMessage];
+      const lastMsgSummary = content || (attachments && attachments.length > 1 ? `[${attachments.length} Images]` : (attachment ? `[${attachment.type.toUpperCase()}]` : ''));
       currentConvs[targetIdx] = {
         ...conv,
-        lastMessage: content || (attachment ? `[${attachment.type.toUpperCase()}]` : ''),
+        lastMessage: lastMsgSummary,
         lastMessageTime: optimisticMessage.timestamp,
         messages: updatedMessages,
       };
-      saveCachedConversations(currentConvs);
+      saveCachedConversations(currentConvs, senderEmail);
     }
 
     // Call server API
@@ -189,23 +278,23 @@ export const chatService = {
     const data = await res.json();
     if (!res.ok || !data.success) {
       // Mark as failed in cache
-      const latestConvs = loadCachedConversations();
+      const latestConvs = loadCachedConversations(senderEmail);
       const idx = latestConvs.findIndex((c) => c.id === conversationId);
       if (idx >= 0) {
         latestConvs[idx].messages = latestConvs[idx].messages.map((m) =>
           m.id === optimisticMessage.id ? { ...m, status: 'failed' } : m
         );
-        saveCachedConversations(latestConvs);
+        saveCachedConversations(latestConvs, senderEmail);
       }
       throw new Error(data.error || 'Failed to send message.');
     }
 
     // Replace with confirmed server conversation and message
     const updatedConv: Conversation = data.conversation;
-    const latest = loadCachedConversations().map((c) =>
+    const latest = loadCachedConversations(senderEmail).map((c) =>
       c.id === updatedConv.id ? updatedConv : c
     );
-    saveCachedConversations(latest);
+    saveCachedConversations(latest, senderEmail);
 
     return { message: data.message, conversation: updatedConv };
   },
@@ -266,7 +355,7 @@ export const chatService = {
   },
 
   /**
-   * End Chat (Business only - closes connection and clears client history)
+   * End Chat (Client only - ends chat session)
    */
   async endChat(conversationId: string, userEmail: string): Promise<Conversation> {
     const res = await fetch('/api/chat/end', {
@@ -278,6 +367,30 @@ export const chatService = {
     const data = await res.json();
     if (!res.ok || !data.success) {
       throw new Error(data.error || 'Failed to end chat.');
+    }
+
+    const updatedConv: Conversation = data.conversation;
+    const latest = loadCachedConversations().map((c) =>
+      c.id === updatedConv.id ? updatedConv : c
+    );
+    saveCachedConversations(latest);
+
+    return updatedConv;
+  },
+
+  /**
+   * Reopen an ended Chat session
+   */
+  async reopenChat(conversationId: string, userEmail: string): Promise<Conversation> {
+    const res = await fetch('/api/chat/reopen', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ conversationId, userEmail }),
+    });
+
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      throw new Error(data.error || 'Failed to reopen chat.');
     }
 
     const updatedConv: Conversation = data.conversation;
@@ -326,8 +439,14 @@ export const chatService = {
 
     const email = userEmail.trim().toLowerCase();
 
+    // Register local subscriber for synchronous in-tab updates
+    if (!activeSubscribers.has(email)) {
+      activeSubscribers.set(email, new Set());
+    }
+    activeSubscribers.get(email)!.add(onUpdate);
+
     // 1. Initial cached response
-    const cached = loadCachedConversations();
+    const cached = loadCachedConversations(email);
     if (cached.length > 0) {
       onUpdate(cached);
     }
@@ -337,23 +456,17 @@ export const chatService = {
       onUpdate(fresh);
     });
 
-    // 3. Local tab and cross-tab listener
-    const localHandler = () => {
-      onUpdate(loadCachedConversations());
-    };
-
+    // 3. Cross-tab real-time listener (responds to updates from other open tabs/windows)
     let bc: BroadcastChannel | null = null;
-    if (typeof window !== 'undefined') {
-      window.addEventListener('orqland_chat_updated', localHandler);
-      window.addEventListener('storage', localHandler);
-      if ('BroadcastChannel' in window) {
-        bc = new BroadcastChannel(CHANNEL_NAME);
-        bc.onmessage = () => {
-          chatService.fetchConversations(email).then((fresh) => {
-            onUpdate(fresh);
-          });
-        };
-      }
+    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+      bc = new BroadcastChannel(CHANNEL_NAME);
+      bc.onmessage = (event) => {
+        // Only react to updates originating from other tabs to prevent redundant local fetches
+        if (event.data?.senderTabId && event.data.senderTabId === TAB_ID) return;
+        chatService.fetchConversations(email).then((fresh) => {
+          onUpdate(fresh);
+        });
+      };
     }
 
     // 4. Background polling loop (every 1.5s) to guarantee cross-device & cross-browser synchronization
@@ -364,13 +477,10 @@ export const chatService = {
     }, 1500);
 
     return () => {
+      activeSubscribers.get(email)?.delete(onUpdate);
       clearInterval(interval);
-      if (typeof window !== 'undefined') {
-        window.removeEventListener('orqland_chat_updated', localHandler);
-        window.removeEventListener('storage', localHandler);
-        if (bc) {
-          bc.close();
-        }
+      if (bc) {
+        bc.close();
       }
     };
   },

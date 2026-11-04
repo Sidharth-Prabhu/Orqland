@@ -3,6 +3,7 @@ import path from 'path';
 import { Conversation, ChatMessage, ChatAttachment } from '@/types/chat';
 import { isBusinessUser, isAttachmentExpired } from './security';
 import { ATTACHMENT_RETENTION_MS } from './constants';
+import { encryptConversationAtRest, decryptConversationAtRest } from './encryption';
 
 const DB_PATH = path.join(process.cwd(), 'src/data/conversations_db.json');
 const USERS_PATH = path.join(process.cwd(), 'src/data/users_db.json');
@@ -60,7 +61,9 @@ function readAll(): Conversation[] {
   try {
     const data = fs.readFileSync(DB_PATH, 'utf-8');
     if (!data.trim()) return [];
-    cachedConversations = JSON.parse(data);
+    const parsed = JSON.parse(data);
+    // Decrypt messages, attachments and sensitive data at rest
+    cachedConversations = decryptConversationAtRest(parsed);
     return cachedConversations || [];
   } catch (err) {
     console.error('Error reading conversations_db.json:', err);
@@ -72,8 +75,10 @@ function writeAll(conversations: Conversation[]) {
   ensureFiles();
   try {
     cachedConversations = conversations;
+    // Encrypt messages, attachments and sensitive data at rest with AES-256-GCM
+    const encryptedForDisk = encryptConversationAtRest(conversations);
     const tempFile = `${DB_PATH}.tmp`;
-    fs.writeFileSync(tempFile, JSON.stringify(conversations, null, 2), 'utf-8');
+    fs.writeFileSync(tempFile, JSON.stringify(encryptedForDisk, null, 2), 'utf-8');
     fs.renameSync(tempFile, DB_PATH);
   } catch (err) {
     console.error('Error writing conversations_db.json:', err);
@@ -89,6 +94,7 @@ function purgeExpired(convs: Conversation[]): Conversation[] {
     const messages = conv.messages.map((msg) => {
       if (
         msg.attachment &&
+        msg.attachment.type !== 'location' &&
         !msg.attachment.isExpired &&
         isAttachmentExpired(msg.attachment.uploadedAt, msg.attachment.expiresAt)
       ) {
@@ -320,38 +326,42 @@ export const serverChatStore = {
   },
 
   initiateChat(params: {
-    businessEmail: string;
-    businessName: string;
-    businessAvatar: string;
     clientEmail: string;
-    clientName: string;
+    clientName?: string;
     clientAvatar?: string;
+    businessEmail: string;
+    businessName?: string;
+    businessAvatar?: string;
     workspaceName?: string;
     initialMessage?: string;
+    viewerEmail?: string;
   }): Conversation {
     const {
-      businessEmail,
-      businessName,
-      businessAvatar,
       clientEmail,
       clientName,
       clientAvatar,
-      workspaceName = 'General Workspace',
+      businessEmail,
+      businessName,
+      businessAvatar,
+      workspaceName = 'General Consultation',
       initialMessage,
+      viewerEmail,
     } = params;
-
-    if (!isBusinessUser(businessEmail)) {
-      throw new Error(
-        'Permission Denied: Only the Business account can initiate conversations with clients.'
-      );
-    }
 
     if (!clientEmail || !clientEmail.trim() || !clientEmail.includes('@')) {
       throw new Error('A valid client email address is required.');
     }
 
+    if (!businessEmail || !businessEmail.trim() || !businessEmail.includes('@')) {
+      throw new Error('A valid business email address is required.');
+    }
+
     const normClientEmail = clientEmail.trim().toLowerCase();
     const normBusinessEmail = businessEmail.trim().toLowerCase();
+
+    if (normClientEmail === normBusinessEmail) {
+      throw new Error('Cannot start a conversation with yourself.');
+    }
 
     // Check registered user profile for client & business
     const users = readUsers();
@@ -393,19 +403,21 @@ export const serverChatStore = {
       minute: '2-digit',
     });
 
+    const activeViewerEmail = (viewerEmail || normClientEmail).toLowerCase();
+
     if (activeExistingIndex >= 0) {
       const existing = all[activeExistingIndex];
 
-      // If active session exists, restore business visibility and append message
+      // If active session exists, restore visibility for both parties and append message if present
       const updatedMessages = [...existing.messages];
       if (initialMessage && initialMessage.trim()) {
         updatedMessages.push({
           id: `msg-${now}`,
           conversationId: existing.id,
-          senderId: normBusinessEmail,
-          senderEmail: normBusinessEmail,
-          senderName: effectiveBusinessName,
-          senderAvatar: effectiveBusinessAvatar,
+          senderId: normClientEmail,
+          senderEmail: normClientEmail,
+          senderName: effectiveClientName,
+          senderAvatar: effectiveClientAvatar,
           content: initialMessage.trim(),
           timestamp: timeString,
           date: 'Today',
@@ -422,9 +434,9 @@ export const serverChatStore = {
         businessAvatar: effectiveBusinessAvatar || existing.businessAvatar,
         deletedByBusiness: false,
         deletedForClient: false,
-        unreadByClient: initialMessage?.trim()
-          ? (existing.unreadByClient || 0) + 1
-          : existing.unreadByClient || 0,
+        unreadByBusiness: initialMessage?.trim()
+          ? (existing.unreadByBusiness || 0) + 1
+          : existing.unreadByBusiness || 0,
         lastMessage: initialMessage?.trim() || existing.lastMessage,
         lastMessageTime: timeString,
         lastMessageTimestamp: now,
@@ -433,10 +445,10 @@ export const serverChatStore = {
 
       all[activeExistingIndex] = updated;
       writeAll(all);
-      return formatConversationForViewer(updated, normBusinessEmail);
+      return formatConversationForViewer(updated, activeViewerEmail);
     }
 
-    // Otherwise, create a brand new session-based conversation
+    // Otherwise, create a brand new session-based conversation initiated by client
     const convId = `conv-${now}`;
     const initialMessages: ChatMessage[] = [];
 
@@ -444,10 +456,10 @@ export const serverChatStore = {
       initialMessages.push({
         id: `msg-${now}`,
         conversationId: convId,
-        senderId: normBusinessEmail,
-        senderEmail: normBusinessEmail,
-        senderName: effectiveBusinessName,
-        senderAvatar: effectiveBusinessAvatar,
+        senderId: normClientEmail,
+        senderEmail: normClientEmail,
+        senderName: effectiveClientName,
+        senderAvatar: effectiveClientAvatar,
         content: initialMessage.trim(),
         timestamp: timeString,
         date: 'Today',
@@ -467,23 +479,23 @@ export const serverChatStore = {
       businessName: effectiveBusinessName,
       businessAvatar: effectiveBusinessAvatar,
       participant: {
-        id: normClientEmail,
-        name: effectiveClientName,
-        email: normClientEmail,
-        handle: `@${normClientEmail.split('@')[0]}`,
-        avatar: effectiveClientAvatar,
+        id: normBusinessEmail,
+        name: effectiveBusinessName,
+        email: normBusinessEmail,
+        handle: '@orqland',
+        avatar: effectiveBusinessAvatar,
         isOnline: true,
-        role: 'client',
+        role: 'business',
       },
       status: 'active',
       deletedByBusiness: false,
       deletedForClient: false,
-      lastMessage: initialMessage?.trim() || 'Conversation opened by business',
+      lastMessage: initialMessage?.trim() || 'Conversation started by client',
       lastMessageTime: timeString,
       lastMessageTimestamp: now,
       unreadCount: 0,
-      unreadByClient: initialMessage?.trim() ? 1 : 0,
-      unreadByBusiness: 0,
+      unreadByClient: 0,
+      unreadByBusiness: initialMessage?.trim() ? 1 : 0,
       workspaceInfo: {
         name: workspaceName,
         type: 'Orqspace',
@@ -495,7 +507,7 @@ export const serverChatStore = {
     all.unshift(newConversation);
     writeAll(all);
 
-    return formatConversationForViewer(newConversation, normBusinessEmail);
+    return formatConversationForViewer(newConversation, activeViewerEmail);
   },
 
   sendMessage(params: {
@@ -505,6 +517,7 @@ export const serverChatStore = {
     senderAvatar: string;
     content: string;
     attachment?: ChatAttachment;
+    attachments?: ChatAttachment[];
   }): { message: ChatMessage; conversation: Conversation } {
     const {
       conversationId,
@@ -513,6 +526,7 @@ export const serverChatStore = {
       senderAvatar,
       content,
       attachment,
+      attachments,
     } = params;
 
     const all = readAll();
@@ -567,21 +581,43 @@ export const serverChatStore = {
       attachment: attachment
         ? {
             ...attachment,
+            locationData:
+              attachment.locationData ||
+              (attachment.type === 'location'
+                ? {
+                    latitude: 0,
+                    longitude: 0,
+                    label: attachment.name || 'Shared Location',
+                    mapUrl: attachment.url,
+                  }
+                : undefined),
             uploadedAt: now,
             expiresAt: now + ATTACHMENT_RETENTION_MS,
             isExpired: false,
           }
         : undefined,
+      attachments: attachments && attachments.length > 0
+        ? attachments.map((att) => ({
+            ...att,
+            uploadedAt: now,
+            expiresAt: now + ATTACHMENT_RETENTION_MS,
+            isExpired: false,
+          }))
+        : undefined,
     };
 
     const updatedMessages = [...conv.messages, newMessage];
+
+    const attachmentSummary = attachments && attachments.length > 1
+      ? `[${attachments.length} Images]`
+      : (attachment ? `[${attachment.type.toUpperCase()} Attachment]` : (attachments?.[0] ? `[${attachments[0].type.toUpperCase()} Attachment]` : ''));
 
     const updatedConv: Conversation = {
       ...conv,
       clientAvatar: isSenderClient && cleanSenderAvatar ? cleanSenderAvatar : conv.clientAvatar,
       businessAvatar: isSenderBusiness && cleanSenderAvatar ? cleanSenderAvatar : conv.businessAvatar,
       deletedByBusiness: isSenderBusiness ? false : conv.deletedByBusiness,
-      lastMessage: content.trim() || (attachment ? `[${attachment.type.toUpperCase()} Attachment]` : ''),
+      lastMessage: content.trim() || attachmentSummary,
       lastMessageTime: timeString,
       lastMessageTimestamp: now,
       messages: updatedMessages,
@@ -651,10 +687,6 @@ export const serverChatStore = {
   },
 
   endChat(conversationId: string, userEmail: string): Conversation {
-    if (!isBusinessUser(userEmail)) {
-      throw new Error('Permission Denied: Only the Business can end an active chat.');
-    }
-
     const all = readAll();
     const index = all.findIndex((c) => c.id === conversationId);
 
@@ -662,14 +694,60 @@ export const serverChatStore = {
       throw new Error('Conversation not found.');
     }
 
+    const conv = all[index];
+    const normUser = userEmail.trim().toLowerCase();
+    const isClient = normUser === (conv.clientEmail || '').toLowerCase();
+
+    // Permission: Only clients can end the chat session (not businesses)
+    if (!isClient) {
+      throw new Error('Permission Denied: Only clients can end a chat session.');
+    }
+
     const now = Date.now();
     const updated: Conversation = {
-      ...all[index],
+      ...conv,
       status: 'ended',
       endedAt: now,
-      endedBy: userEmail.trim().toLowerCase(),
+      endedBy: normUser,
       deletedForClient: false,
-      lastMessage: 'This chat session was ended by the business.',
+      lastMessage: 'This chat session was ended by the client.',
+      lastMessageTime: new Date(now).toLocaleTimeString([], {
+        hour: '2-digit',
+        minute: '2-digit',
+      }),
+      lastMessageTimestamp: now,
+    };
+
+    all[index] = updated;
+    writeAll(all);
+
+    return formatConversationForViewer(updated, userEmail);
+  },
+
+  reopenChat(conversationId: string, userEmail: string): Conversation {
+    const all = readAll();
+    const index = all.findIndex((c) => c.id === conversationId);
+
+    if (index === -1) {
+      throw new Error('Conversation not found.');
+    }
+
+    const conv = all[index];
+    const normUser = userEmail.trim().toLowerCase();
+    const isClient = normUser === (conv.clientEmail || '').toLowerCase();
+    const isBusiness = normUser === (conv.businessEmail || '').toLowerCase();
+
+    if (!isClient && !isBusiness) {
+      throw new Error('Unauthorized: You are not a participant in this conversation.');
+    }
+
+    const now = Date.now();
+    const updated: Conversation = {
+      ...conv,
+      status: 'active',
+      endedAt: undefined,
+      endedBy: undefined,
+      lastMessage: 'Chat session re-opened',
       lastMessageTime: new Date(now).toLocaleTimeString([], {
         hour: '2-digit',
         minute: '2-digit',
@@ -692,7 +770,12 @@ export const serverChatStore = {
 
     const conv = all[index];
     const normReader = readerEmail.trim().toLowerCase();
-    const isBusiness = isBusinessUser(normReader);
+    const isClient = normReader === (conv.clientEmail || '').toLowerCase();
+    const isBusiness = normReader === (conv.businessEmail || '').toLowerCase();
+
+    if (!isClient && !isBusiness) {
+      return; // Reject unauthorized manipulation
+    }
 
     let hasUnread = false;
     const updatedMessages = conv.messages.map((m) => {

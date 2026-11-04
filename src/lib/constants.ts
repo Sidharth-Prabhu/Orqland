@@ -25,23 +25,32 @@ export const MAX_ATTACHMENT_SIZE_BYTES = 10 * 1024 * 1024;
 
 // Prohibited Sensitive Information regex patterns
 export const SENSITIVE_INFO_PATTERNS = [
-  // Credit Card numbers (13-19 digits with optional spaces/dashes)
+  // Credit / Debit Card numbers (13-19 digits with optional spaces/dashes)
   /\b(?:\d[ -]*?){13,19}\b/,
-  // OTPs / PINs patterns
-  /\b(?:otp|one[- ]?time[- ]?passcode|pin|cvv|cvc)\s*[:=]?\s*\d{4,8}\b/i,
-  // Bank Account Numbers (e.g. 9-18 consecutive digits labeled as account)
-  /\b(?:account|acct|iban|routing)\s*(?:no|number|#)?\s*[:=]?\s*[0-9A-Z]{8,24}\b/i,
-  // Passwords
-  /\b(?:password|passwd|pwd)\s*[:=]?\s*\S{4,}\b/i,
+  // CVV / CVC (3-4 digits labeled as cvv/cvc)
+  /\b(?:cvv|cvc|security\s*code)\s*[:=]?\s*\d{3,4}\b/i,
+  // OTPs / PINs / Verification Codes (e.g. "otp is 123456", "otp: 1234", "pin is 4321")
+  /\b(?:otp|one[- ]?time[- ]?pass(?:code|word)?|pin|verification\s*code|auth\s*code)\b(?:\s*(?:is|was|:|=|-)+)?\s*\d{4,8}\b/i,
+  // Bank Account Numbers, IBAN, Routing numbers, IFSC
+  /\b(?:account|acct|iban|routing|ifsc|swift|bank\s*a\/c)\s*(?:no|number|#)?\s*(?:is|was|:|=|-)?\s*[0-9A-Z]{6,34}\b/i,
+  // Passwords / Credentials (e.g. "password is secret", "password: abc", "pwd = 123")
+  /\b(?:password|passwd|pwd|passcode|secret\s*key)\b(?:\s*(?:is|was|:|=|-)+)?\s*\S{4,}\b/i,
+  // National Identity Documents (SSN, Aadhaar 12-digit, Passport)
+  /\b\d{3}-\d{2}-\d{4}\b/, // US SSN
+  /\b[2-9]\d{3}\s?\d{4}\s?\d{4}\b/, // Indian Aadhaar card
+  /\b[A-Z][0-9]{7,8}\b/, // Passport number format
 ];
 
 // Safety warnings
 export const ORQLAND_DISCLAIMER =
-  'Orqland Safety Notice: Orqland will never ask for your password, OTP, PIN, bank details, or confidential financial information in chat.';
+  'Orqland Safety Notice: Orqland will never ask for your password, OTP, PIN, bank details, card numbers, or confidential financial/personal information through chat.';
 
 export const CONTACT_SAFETY_NOTICE =
-  'Safety Reminder: Do not share personal phone numbers or confidential personal details through chat.';
+  'Safety & Contact Reminder: Never share personal mobile numbers or confidential private credentials through chat.';
 
 export const ATTACHMENT_48H_WARNING =
-  'Notice: Shared images and PDF attachments will be automatically and permanently deleted after 48 hours from upload. Do not share files that require long-term storage.';
+  'Security Notice: All image and PDF attachments are encrypted at rest and will be automatically and permanently deleted after 48 hours from upload. Do not share files that require long-term storage.';
+
+export const CALLS_DISABLED_NOTICE =
+  'Voice and video calls are not supported for user privacy and security. Communication is restricted to authenticated text messages, approved images/PDFs, and location sharing only.';
 

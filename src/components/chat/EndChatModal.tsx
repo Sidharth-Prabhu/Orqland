@@ -50,20 +50,17 @@ export const EndChatModal: React.FC<EndChatModalProps> = ({
 
         <div className="space-y-3 mb-6 text-xs text-gray-600 leading-relaxed bg-red-50/50 p-4 rounded-2xl border border-red-100/80">
           <p className="font-bold text-red-900">
-            Warning: This action terminates the chat session with {clientName}:
+            Warning: This action will permanently end this chat session:
           </p>
           <ul className="space-y-2 list-disc list-inside text-gray-700">
             <li>
-              <strong className="text-gray-900">Permanently terminates</strong> this active chat session.
+              <strong className="text-gray-900">Permanently terminates</strong> this active chat session with {clientName}.
             </li>
             <li>
-              <strong className="text-gray-900">Prevents both parties</strong> from sending or receiving any further messages in this session.
+              <strong className="text-gray-900">Prevents both parties</strong> from sending or receiving further messages in this thread.
             </li>
             <li>
-              The chat composer will be permanently <strong className="text-gray-900">locked</strong> for both the business and the client.
-            </li>
-            <li>
-              The client <strong className="text-gray-900">cannot restart</strong> this session. To talk to this client again, you can initiate a fresh session at any time.
+              The chat composer will be permanently <strong className="text-gray-900">locked</strong>.
             </li>
             <li>
               This action <strong className="text-red-700">cannot be undone</strong>.

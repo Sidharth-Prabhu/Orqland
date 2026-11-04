@@ -70,27 +70,34 @@ export function validateAttachmentFile(file: File): {
 
 export function detectSensitiveContent(text: string): {
   hasSensitiveData: boolean;
+  isBlocked?: boolean;
   warning?: string;
+  error?: string;
 } {
   if (!text) return { hasSensitiveData: false };
 
+  // 1. Check for prohibited confidential financial & authentication info (Strict Block)
   for (const pattern of SENSITIVE_INFO_PATTERNS) {
     if (pattern.test(text)) {
       return {
         hasSensitiveData: true,
+        isBlocked: true,
+        error:
+          'Security Policy Violation: Sharing credit/debit card numbers, OTPs, PINs, bank account details, passwords, or identity documents through chat is strictly prohibited.',
         warning:
-          'Security Alert: Your message appears to contain sensitive information (such as credit card, OTP, bank account, or password). To protect your privacy and security, sharing confidential financial data or credentials via chat is strictly prohibited.',
+          'Prohibited Information Detected: Orqland will never ask for your password, OTP, PIN, or bank details. Do not share credentials or confidential data.',
       };
     }
   }
 
-  // Phone number pattern check (7+ consecutive digits)
-  const phonePattern = /(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}/;
+  // 2. Mobile number & contact safety check (Indian 10-digit or international format)
+  const phonePattern = /(?:(?:\+|00)\d{1,3}[-.\s]?)?(?:\(?\d{2,4}\)?[-.\s]?)?[6-9]\d{9}\b|\b(?:\d{3}[-.\s]?){3}\d\b/;
   if (phonePattern.test(text)) {
     return {
       hasSensitiveData: true,
+      isBlocked: false,
       warning:
-        'Privacy Notice: Please avoid sharing personal phone numbers or direct contact numbers in the chat.',
+        'Mobile Number & Contact Safety Reminder: Please avoid sharing personal mobile numbers or private contact information in chat.',
     };
   }
 

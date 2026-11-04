@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { isBusinessUser } from '@/lib/security';
 import { serverChatStore } from '@/lib/serverChatStore';
 
 export async function POST(req: NextRequest) {
@@ -14,19 +13,8 @@ export async function POST(req: NextRequest) {
       clientAvatar,
       workspaceName,
       initialMessage,
+      viewerEmail,
     } = body;
-
-    // Strict Backend Permission Enforcement:
-    // Only the business user (mailtosidharth.me@gmail.com) can initiate a chat with a client.
-    if (!isBusinessUser(businessEmail)) {
-      return NextResponse.json(
-        {
-          error:
-            'Permission Denied: Only the Business account can initiate conversations with clients. Clients cannot initiate conversations or send the first message.',
-        },
-        { status: 403 }
-      );
-    }
 
     if (!clientEmail || typeof clientEmail !== 'string' || !clientEmail.includes('@')) {
       return NextResponse.json(
@@ -35,15 +23,30 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    if (!businessEmail || typeof businessEmail !== 'string' || !businessEmail.includes('@')) {
+      return NextResponse.json(
+        { error: 'A valid business email address is required.' },
+        { status: 400 }
+      );
+    }
+
+    if (clientEmail.trim().toLowerCase() === businessEmail.trim().toLowerCase()) {
+      return NextResponse.json(
+        { error: 'You cannot initiate a conversation with yourself.' },
+        { status: 400 }
+      );
+    }
+
     const conversation = serverChatStore.initiateChat({
-      businessEmail,
-      businessName: businessName || 'Business Workspace',
-      businessAvatar: businessAvatar || '',
-      clientEmail,
+      clientEmail: clientEmail.trim().toLowerCase(),
       clientName: clientName || clientEmail.split('@')[0],
       clientAvatar,
-      workspaceName,
+      businessEmail: businessEmail.trim().toLowerCase(),
+      businessName: businessName || 'Business Workspace',
+      businessAvatar: businessAvatar || '',
+      workspaceName: workspaceName || 'General Consultation',
       initialMessage,
+      viewerEmail: viewerEmail || clientEmail.trim().toLowerCase(),
     });
 
     return NextResponse.json({ success: true, conversation });

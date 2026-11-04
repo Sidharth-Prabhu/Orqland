@@ -12,6 +12,8 @@ interface DirectMessagesListProps {
   isBusiness: boolean;
   onOpenStartChat?: () => void;
   onDeleteConversation?: (id: string) => void;
+  className?: string;
+  style?: React.CSSProperties;
 }
 
 export const DirectMessagesList: React.FC<DirectMessagesListProps> = ({
@@ -21,27 +23,33 @@ export const DirectMessagesList: React.FC<DirectMessagesListProps> = ({
   isBusiness,
   onOpenStartChat,
   onDeleteConversation,
+  className = '',
+  style,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
 
   const filteredConversations = conversations.filter((c) =>
     c.participant.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    c.lastMessage.toLowerCase().includes(searchQuery.toLowerCase())
+    c.participant.email?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    'new message'.includes(searchQuery.toLowerCase())
   );
 
   return (
-    <aside className="w-full md:w-[310px] xl:w-[330px] flex-shrink-0 border-r border-gray-200 bg-white flex flex-col h-full select-none">
+    <aside
+      style={style}
+      className={`w-full flex-shrink-0 border-r border-gray-200 bg-white flex flex-col h-full select-none ${className}`}
+    >
       {/* Top Header & Search Input */}
       <div className="p-4 pb-3 border-b border-gray-100">
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-[13px] font-extrabold text-[#222222] tracking-wider uppercase">
             Direct Messages
           </h2>
-          {isBusiness && onOpenStartChat && (
+          {onOpenStartChat && (
             <button
               onClick={onOpenStartChat}
               className="flex items-center gap-1 px-2.5 py-1 bg-black hover:bg-gray-800 text-white rounded-lg text-xs font-bold transition-all shadow-sm cursor-pointer"
-              title="Initiate chat with client"
+              title="Start conversation with a business"
             >
               <Plus size={13} strokeWidth={2.5} />
               <span>New</span>
@@ -74,9 +82,9 @@ export const DirectMessagesList: React.FC<DirectMessagesListProps> = ({
             <p className="text-[11px] text-gray-400 mt-1 max-w-[210px] leading-relaxed">
               {searchQuery
                 ? 'No conversations match your search.'
-                : isBusiness
-                ? 'Click "New" to initiate a conversation with a client.'
-                : 'Waiting for the business to initiate communication. Clients cannot initiate conversations.'}
+                : !isBusiness
+                ? 'Click "New" above to search for a business and start a conversation.'
+                : 'Waiting for clients to initiate conversations with your business.'}
             </p>
           </div>
         ) : (
@@ -99,21 +107,13 @@ export const DirectMessagesList: React.FC<DirectMessagesListProps> = ({
                   <div className="absolute left-0 top-0 bottom-0 w-[3px] bg-[#0066ff]" />
                 )}
 
-                {/* Avatar with Status Badge */}
+                {/* Avatar */}
                 <div className="relative flex-shrink-0 mt-0.5">
                   <UserAvatar
                     src={conv.participant.avatar}
                     name={conv.participant.name}
                     size={40}
                   />
-                  {/* Status Indicator */}
-                  {!isEnded && (
-                    <span
-                      className={`absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full ring-2 ring-white ${
-                        conv.participant.isOnline ? 'bg-[#22c55e]' : 'bg-gray-400'
-                      }`}
-                    />
-                  )}
                 </div>
 
                 {/* Contact Info and Message Preview */}
@@ -151,18 +151,27 @@ export const DirectMessagesList: React.FC<DirectMessagesListProps> = ({
                     </div>
                   </div>
 
-                  <div className="flex items-start justify-between gap-2">
-                    <p className="text-[12px] text-gray-500 line-clamp-2 leading-relaxed">
-                      {conv.lastMessage}
-                    </p>
+                  {!isEnded && (
+                    <div className="flex items-start justify-between gap-2">
+                      {conv.unreadCount > 0 ? (
+                        <>
+                          <p className="text-[12px] line-clamp-1 leading-relaxed text-gray-900 font-semibold">
+                            New Message
+                          </p>
 
-                    {/* Unread Counter Badge */}
-                    {conv.unreadCount > 0 && (
-                      <span className="flex-shrink-0 w-4 h-4 bg-[#ef4444] text-white text-[10px] font-bold rounded-full flex items-center justify-center mt-0.5 shadow-sm">
-                        {conv.unreadCount}
-                      </span>
-                    )}
-                  </div>
+                          {/* Blinking Unread Indicator */}
+                          <span className="relative flex h-2.5 w-2.5 flex-shrink-0 mt-1">
+                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-500 opacity-75" />
+                            <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-blue-600" />
+                          </span>
+                        </>
+                      ) : (
+                        <p className="text-[12px] line-clamp-1 leading-relaxed text-gray-400 font-normal">
+                          {conv.businessName || conv.workspaceInfo?.name || 'Workspace'}
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             );

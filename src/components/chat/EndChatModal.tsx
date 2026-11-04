@@ -35,35 +35,35 @@ export const EndChatModal: React.FC<EndChatModalProps> = ({
         </button>
 
         <div className="flex items-center gap-3.5 mb-4">
-          <div className="w-12 h-12 rounded-2xl bg-red-50 border border-red-200/80 flex items-center justify-center text-red-600 flex-shrink-0">
+          <div className="w-12 h-12 rounded-2xl bg-amber-50 border border-amber-200/80 flex items-center justify-center text-amber-600 flex-shrink-0">
             <Ban size={22} />
           </div>
           <div>
             <h3 className="text-base font-bold text-gray-900">
               End Chat Session?
             </h3>
-            <span className="text-[11px] font-semibold text-red-700 bg-red-100/70 px-2 py-0.5 rounded-full inline-block mt-0.5">
-              Permanent Session Termination
+            <span className="text-[11px] font-semibold text-amber-800 bg-amber-100/70 px-2.5 py-0.5 rounded-full inline-block mt-0.5">
+              Close Current Session
             </span>
           </div>
         </div>
 
-        <div className="space-y-3 mb-6 text-xs text-gray-600 leading-relaxed bg-red-50/50 p-4 rounded-2xl border border-red-100/80">
-          <p className="font-bold text-red-900">
-            Warning: This action will permanently end this chat session:
+        <div className="space-y-3 mb-6 text-xs text-gray-600 leading-relaxed bg-amber-50/50 p-4 rounded-2xl border border-amber-100/80">
+          <p className="font-bold text-amber-950">
+            What happens when you end this session:
           </p>
           <ul className="space-y-2 list-disc list-inside text-gray-700">
             <li>
-              <strong className="text-gray-900">Permanently terminates</strong> this active chat session with {clientName}.
+              <strong className="text-gray-900">Closes the active conversation</strong> with {clientName}.
             </li>
             <li>
-              <strong className="text-gray-900">Prevents both parties</strong> from sending or receiving further messages in this thread.
+              <strong className="text-gray-900">Locks the composer</strong> until the chat session is re-opened.
             </li>
             <li>
-              The chat composer will be permanently <strong className="text-gray-900">locked</strong>.
+              Your message history and shared files <strong className="text-gray-900">remain safe</strong> and accessible.
             </li>
             <li>
-              This action <strong className="text-red-700">cannot be undone</strong>.
+              <strong className="text-emerald-700">Re-openable anytime:</strong> As the client, you can re-open this session whenever you wish to continue chatting.
             </li>
           </ul>
         </div>
@@ -84,7 +84,7 @@ export const EndChatModal: React.FC<EndChatModalProps> = ({
             className="flex items-center gap-2 px-5 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold shadow-sm transition-all cursor-pointer disabled:opacity-50"
           >
             <Ban size={14} />
-            <span>{isSubmitting ? 'Terminating...' : 'End Chat Session'}</span>
+            <span>{isSubmitting ? 'Ending...' : 'End Chat Session'}</span>
           </button>
         </div>
       </div>

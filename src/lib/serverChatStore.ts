@@ -310,12 +310,27 @@ export const serverChatStore = {
     const isBusiness = isBusinessUser(normViewer);
     const all = purgeExpired(readAll());
 
+    // Deduplicate / consolidate by client + business pair so there is strictly one chat window per business
+    const seenPairs = new Set<string>();
+    const uniqueConvs: Conversation[] = [];
+
+    for (const c of all) {
+      const client = (c.clientEmail || '').trim().toLowerCase();
+      const business = (c.businessEmail || '').trim().toLowerCase();
+      const pairKey = `${client}__${business}`;
+
+      if (!seenPairs.has(pairKey)) {
+        seenPairs.add(pairKey);
+        uniqueConvs.push(c);
+      }
+    }
+
     if (isBusiness) {
-      return all
+      return uniqueConvs
         .filter((c) => !c.deletedByBusiness)
         .map((c) => formatConversationForViewer(c, normViewer));
     } else {
-      return all
+      return uniqueConvs
         .filter((c) => {
           const clientMatches = (c.clientEmail || '').toLowerCase() === normViewer;
           const notDeleted = !c.deletedForClient;
@@ -390,11 +405,11 @@ export const serverChatStore = {
 
     const all = readAll();
 
-    const activeExistingIndex = all.findIndex(
+    // Find any conversation with this business (active OR ended)
+    const existingIndex = all.findIndex(
       (c) =>
         (c.clientEmail || '').toLowerCase() === normClientEmail &&
-        (c.businessEmail || '').toLowerCase() === normBusinessEmail &&
-        c.status === 'active'
+        (c.businessEmail || '').toLowerCase() === normBusinessEmail
     );
 
     const now = Date.now();
@@ -405,10 +420,28 @@ export const serverChatStore = {
 
     const activeViewerEmail = (viewerEmail || normClientEmail).toLowerCase();
 
-    if (activeExistingIndex >= 0) {
-      const existing = all[activeExistingIndex];
+    // ENFORCE SINGLE CHAT SESSION PER BUSINESS:
+    // If ANY conversation already exists between this client and business:
+    if (existingIndex >= 0) {
+      const existing = all[existingIndex];
 
-      // If active session exists, restore visibility for both parties and append message if present
+      // If already ended, do NOT create a new session or auto-send new messages!
+      // Simply unhide for client if hidden, update business details if changed, and return the ended conversation
+      if (existing.status === 'ended') {
+        const updatedEnded: Conversation = {
+          ...existing,
+          deletedForClient: false,
+          clientName: effectiveClientName || existing.clientName,
+          clientAvatar: effectiveClientAvatar || existing.clientAvatar,
+          businessName: effectiveBusinessName || existing.businessName,
+          businessAvatar: effectiveBusinessAvatar || existing.businessAvatar,
+        };
+        all[existingIndex] = updatedEnded;
+        writeAll(all);
+        return formatConversationForViewer(updatedEnded, activeViewerEmail);
+      }
+
+      // If active session exists, append initial message if provided and update last message
       const updatedMessages = [...existing.messages];
       if (initialMessage && initialMessage.trim()) {
         updatedMessages.push({
@@ -443,7 +476,7 @@ export const serverChatStore = {
         messages: updatedMessages,
       };
 
-      all[activeExistingIndex] = updated;
+      all[existingIndex] = updated;
       writeAll(all);
       return formatConversationForViewer(updated, activeViewerEmail);
     }
@@ -735,10 +768,10 @@ export const serverChatStore = {
     const conv = all[index];
     const normUser = userEmail.trim().toLowerCase();
     const isClient = normUser === (conv.clientEmail || '').toLowerCase();
-    const isBusiness = normUser === (conv.businessEmail || '').toLowerCase();
 
-    if (!isClient && !isBusiness) {
-      throw new Error('Unauthorized: You are not a participant in this conversation.');
+    // Permission: Only clients can re-open an ended chat session (not businesses)
+    if (!isClient) {
+      throw new Error('Permission Denied: Only clients can re-open an ended chat session.');
     }
 
     const now = Date.now();
@@ -747,7 +780,7 @@ export const serverChatStore = {
       status: 'active',
       endedAt: undefined,
       endedBy: undefined,
-      lastMessage: 'Chat session re-opened',
+      lastMessage: 'Chat session re-opened by client',
       lastMessageTime: new Date(now).toLocaleTimeString([], {
         hour: '2-digit',
         minute: '2-digit',

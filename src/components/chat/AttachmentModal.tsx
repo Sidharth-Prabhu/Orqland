@@ -4,6 +4,7 @@ import React, { useState, useRef } from 'react';
 import Image from 'next/image';
 import { Paperclip, X, AlertTriangle, FileText, UploadCloud, AlertCircle, Plus } from 'lucide-react';
 import { validateAttachmentFile } from '@/lib/security';
+import { generatePdfThumbnail } from '@/lib/pdfThumbnail';
 import { ChatAttachment } from '@/types/chat';
 
 interface AttachmentModalProps {
@@ -25,7 +26,8 @@ interface SelectedItem {
 function buildFileAttachment(
   file: File,
   base64Data: string,
-  fileType: 'image' | 'pdf'
+  fileType: 'image' | 'pdf',
+  thumbnailUrl?: string
 ): ChatAttachment {
   const now = Date.now();
   return {
@@ -33,6 +35,7 @@ function buildFileAttachment(
     type: fileType,
     name: file.name,
     url: base64Data,
+    thumbnailUrl: thumbnailUrl || undefined,
     size: file.size,
     mimeType: file.type,
     uploadedAt: now,
@@ -51,7 +54,7 @@ export const AttachmentModal: React.FC<AttachmentModalProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
 
-  const handleFiles = (fileList: FileList | null) => {
+  const handleFiles = async (fileList: FileList | null) => {
     if (!fileList || fileList.length === 0) return;
     setError(null);
 
@@ -72,7 +75,17 @@ export const AttachmentModal: React.FC<AttachmentModalProps> = ({
         return;
       }
       const type = validation.attachmentType === 'pdf' ? 'pdf' : 'image';
-      const previewUrl = type === 'image' ? URL.createObjectURL(file) : '';
+      let previewUrl = '';
+      if (type === 'image') {
+        previewUrl = URL.createObjectURL(file);
+      } else {
+        // Generate PDF first page thumbnail
+        try {
+          previewUrl = await generatePdfThumbnail(file);
+        } catch {
+          previewUrl = '';
+        }
+      }
       validatedItems.push({ file, previewUrl, type });
     }
 
@@ -108,14 +121,22 @@ export const AttachmentModal: React.FC<AttachmentModalProps> = ({
     setError(null);
 
     try {
-      // Read all files as Base64 asynchronously
+      // Read all files as Base64 asynchronously and attach first-page thumbnails
       const readPromises = items.map(
         (item) =>
           new Promise<ChatAttachment>((resolve, reject) => {
             const reader = new FileReader();
-            reader.onload = () => {
+            reader.onload = async () => {
               const base64Data = reader.result as string;
-              resolve(buildFileAttachment(item.file, base64Data, item.type));
+              let thumb = item.previewUrl;
+              if (item.type === 'pdf' && (!thumb || thumb.startsWith('blob:'))) {
+                try {
+                  thumb = await generatePdfThumbnail(item.file);
+                } catch {
+                  thumb = '';
+                }
+              }
+              resolve(buildFileAttachment(item.file, base64Data, item.type, thumb));
             };
             reader.onerror = () => reject(new Error(`Failed to read file ${item.file.name}`));
             reader.readAsDataURL(item.file);
@@ -240,10 +261,10 @@ export const AttachmentModal: React.FC<AttachmentModalProps> = ({
                   key={index}
                   className="relative flex-shrink-0 w-20 h-20 sm:w-22 sm:h-22 rounded-xl overflow-hidden bg-white border border-gray-200 shadow-2xs group"
                 >
-                  {item.type === 'image' ? (
+                  {item.type === 'image' || (item.type === 'pdf' && item.previewUrl) ? (
                     <Image
                       src={item.previewUrl}
-                      alt="Selected picture"
+                      alt={item.file.name}
                       fill
                       className="object-cover"
                       unoptimized

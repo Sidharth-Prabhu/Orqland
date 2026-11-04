@@ -167,7 +167,7 @@ export const DirectMessagesList: React.FC<DirectMessagesListProps> = ({
                         </>
                       ) : (
                         <p className="text-[12px] line-clamp-1 leading-relaxed text-gray-400 font-normal">
-                          {conv.businessName || conv.workspaceInfo?.name || 'Workspace'}
+                          {conv.workspaceInfo?.name || conv.bookingInfo?.serviceName || 'General Consultation'}
                         </p>
                       )}
                     </div>

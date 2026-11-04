@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { Conversation } from '@/types/chat';
-import { ShieldCheck, Clock, Lock, CheckCircle2, Ban, Trash2, X } from 'lucide-react';
+import { Lock, CheckCircle2, Ban, Trash2, X } from 'lucide-react';
 
 interface DetailsSidebarProps {
   conversation: Conversation;
@@ -58,9 +58,9 @@ export const DetailsSidebar: React.FC<DetailsSidebarProps> = ({
           </div>
           <div className="flex items-center gap-2">
             {isEnded ? (
-              <div className="flex items-center gap-1.5 text-red-700 bg-red-50 border border-red-200 px-2.5 py-1 rounded-xl text-xs font-bold">
+              <div className="flex items-center gap-1.5 text-amber-800 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-xl text-xs font-bold">
                 <Lock size={12} />
-                <span>Session Terminated</span>
+                <span>Session Closed</span>
               </div>
             ) : (
               <div className="flex items-center gap-1.5 text-green-700 bg-green-50 border border-green-200 px-2.5 py-1 rounded-xl text-xs font-bold">
@@ -71,7 +71,9 @@ export const DetailsSidebar: React.FC<DetailsSidebarProps> = ({
           </div>
           <p className="text-[11px] text-gray-500 mt-2 leading-relaxed">
             {isEnded
-              ? 'This chat session has been terminated. Messages can no longer be sent or received.'
+              ? isBusiness
+                ? 'This chat session has been closed by the client. Messages can no longer be sent or received.'
+                : 'This chat session is closed. You can re-open this session at any time to continue chatting.'
               : 'Session is active. Both parties can exchange messages, approved files, and location.'}
           </p>
 
@@ -131,39 +133,6 @@ export const DetailsSidebar: React.FC<DetailsSidebarProps> = ({
               {bookingInfo?.status || 'Processing'}
             </span>
           </div>
-        </div>
-
-        {/* Security & Attachment Policy */}
-        <div className="bg-gray-50 rounded-2xl border border-gray-200/70 p-4 space-y-2.5 text-[11px] text-gray-600 leading-relaxed">
-          <div className="flex items-center gap-1.5 font-bold text-gray-900">
-            <ShieldCheck size={14} className="text-blue-600 flex-shrink-0" />
-            <span>Security & Compliance</span>
-          </div>
-          <div className="flex items-start gap-1.5 text-gray-600">
-            <Lock size={13} className="text-emerald-600 mt-0.5 flex-shrink-0" />
-            <span>
-              <strong>AES-256-GCM Encrypted at Rest:</strong> Messages and file attachments are encrypted on disk.
-            </span>
-          </div>
-          <div className="flex items-start gap-1.5 text-gray-600">
-            <ShieldCheck size={13} className="text-blue-600 mt-0.5 flex-shrink-0" />
-            <span>
-              <strong>TLS Encrypted in Transit:</strong> HTTPS encrypted communication channel.
-            </span>
-          </div>
-          <div className="flex items-start gap-1.5 text-gray-600">
-            <Clock size={13} className="text-amber-600 mt-0.5 flex-shrink-0" />
-            <span>
-              <strong>48-Hour Auto-Deletion:</strong> All image and PDF attachments are permanently purged after 48h.
-            </span>
-          </div>
-          <div className="flex items-start gap-1.5 text-gray-500">
-            <Lock size={13} className="text-gray-400 mt-0.5 flex-shrink-0" />
-            <span>Voice & video calls disabled for privacy & security</span>
-          </div>
-          <p className="text-[10px] text-gray-400 pt-1 border-t border-gray-200/80 leading-normal">
-            * Architecture note: Storage is encrypted at rest and in transit via TLS. The system is not end-to-end encrypted.
-          </p>
         </div>
       </div>
     </aside>

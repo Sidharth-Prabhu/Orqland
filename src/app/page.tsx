@@ -15,7 +15,7 @@ import { chatService } from '@/lib/chatService';
 import { BUSINESS_EMAIL } from '@/lib/constants';
 import { isBusinessUser } from '@/lib/security';
 import { Conversation, UserProfile, ChatAttachment, ChatMessage } from '@/types/chat';
-import { MessageSquarePlus, MessageSquare, ShieldCheck } from 'lucide-react';
+import { MessageSquarePlus } from 'lucide-react';
 import { NotificationItem } from '@/components/chat/MailNotificationMenu';
 import { ToastNotification } from '@/components/chat/ToastNotification';
 
@@ -236,6 +236,37 @@ export default function Home() {
     }
   }, [activeConversationId, effectiveViewerEmail]);
 
+  // Global Escape key listener: Close active chat conversation and return to Orqland empty state
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+
+      // Don't close chat if a modal dialog is currently open
+      if (
+        isStartChatModalOpen ||
+        isEndModalOpen ||
+        isDeleteModalOpen
+      ) {
+        return;
+      }
+
+      if (activeConversationId) {
+        e.preventDefault();
+        e.stopPropagation();
+        setActiveConversationId('');
+      }
+    };
+
+    // Use capture phase so Esc is caught reliably even when composer input or child element is focused
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => window.removeEventListener('keydown', handleKeyDown, true);
+  }, [
+    activeConversationId,
+    isStartChatModalOpen,
+    isEndModalOpen,
+    isDeleteModalOpen,
+  ]);
+
   // Derive authenticated user profiles dynamically
   const currentClientUser: UserProfile = user
     ? {
@@ -404,9 +435,9 @@ export default function Home() {
     }
   };
 
-  // Re-open Chat (Allows participants to re-enable an ended session)
+  // Re-open Chat (Clients only - allows clients to re-enable an ended session)
   const handleReopenChat = async (conversationId: string) => {
-    if (!user?.email) return;
+    if (!user?.email || isBusiness) return;
     try {
       await chatService.reopenChat(conversationId, user.email);
     } catch (err) {
@@ -520,7 +551,7 @@ export default function Home() {
             onSendMessage={handleSendMessage}
             onDeleteChat={isBusiness ? handleDeleteChat : undefined}
             onEndChat={!isBusiness ? handleEndChat : undefined}
-            onReopenChat={handleReopenChat}
+            onReopenChat={!isBusiness ? handleReopenChat : undefined}
             onDeleteMessage={isBusiness ? handleDeleteMessage : undefined}
             onBackToList={() => setActiveConversationId('')}
             onToggleDetails={() => setShowDetailsSidebar((prev) => !prev)}
@@ -528,41 +559,38 @@ export default function Home() {
             className={`${!activeConversationId ? 'hidden md:flex' : 'flex'} flex-1 min-w-0`}
           />
         ) : (
-          <div className={`${!activeConversationId ? 'hidden md:flex' : 'flex'} flex-1 flex flex-col items-center justify-center p-6 sm:p-8 text-center bg-[#fafafa]`}>
-            <div className="w-16 h-16 rounded-3xl bg-white shadow-sm border border-gray-200/80 flex items-center justify-center mb-4 text-blue-600">
-              <MessageSquare size={30} />
+          <div className={`${!activeConversationId ? 'hidden md:flex' : 'flex'} flex-1 flex flex-col items-center justify-center p-6 sm:p-8 text-center bg-[#fafafa] select-none`}>
+            {/* Orqland Brand Logo & Colorful Dot Strip */}
+            <div className="flex flex-col items-center mb-4">
+              <span className="text-[36px] font-extrabold tracking-tight text-gray-900 leading-none font-sans">
+                Orqland
+              </span>
+              <div className="flex items-center gap-2 mt-3">
+                <span className="w-2.5 h-2.5 rounded-full bg-[#ff6b22]" />
+                <span className="w-2.5 h-2.5 rounded-full bg-[#ffd026]" />
+                <span className="w-2.5 h-2.5 rounded-full bg-[#10e588]" />
+                <span className="w-2.5 h-2.5 rounded-full bg-[#1fd5f9]" />
+                <span className="w-2.5 h-2.5 rounded-full bg-[#9d5cf7]" />
+                <span className="w-2.5 h-2.5 rounded-full bg-[#ff2d87]" />
+              </div>
             </div>
 
+            <h3 className="text-sm font-semibold text-gray-700 mt-1">
+              Select a conversation to begin
+            </h3>
+            <p className="text-xs text-gray-400 max-w-sm mt-1 mb-5 leading-relaxed">
+              Choose an existing chat from the sidebar or initiate a new inquiry.
+            </p>
+
             {!isBusiness || activeViewMode === 'client' ? (
-              <>
-                <h3 className="text-base font-bold text-gray-900">
-                  Find and Chat with a Business
-                </h3>
-                <p className="text-xs text-gray-500 max-w-sm mt-1.5 mb-6 leading-relaxed">
-                  Search verified businesses across Orqland, select a service or workspace, and initiate a direct conversation.
-                </p>
-                <button
-                  onClick={() => setIsStartChatModalOpen(true)}
-                  className="flex items-center gap-2 px-5 py-2.5 bg-black hover:bg-gray-800 text-white rounded-2xl text-xs font-bold shadow-sm transition-all cursor-pointer"
-                >
-                  <MessageSquarePlus size={15} />
-                  <span>Start a Conversation</span>
-                </button>
-              </>
-            ) : (
-              <>
-                <h3 className="text-base font-bold text-gray-900">
-                  Business Workspace Ready
-                </h3>
-                <div className="max-w-md mt-2 mb-4 p-4 bg-blue-50/70 border border-blue-100 rounded-2xl text-xs text-blue-900 leading-relaxed text-left flex items-start gap-3">
-                  <ShieldCheck size={18} className="text-blue-600 flex-shrink-0 mt-0.5" />
-                  <div>
-                    <strong className="block font-bold mb-0.5">Client-Initiated Communication:</strong>
-                    Clients initiate conversations with your workspace directly. When a client contacts your business, active chat sessions and inquiries will appear here automatically.
-                  </div>
-                </div>
-              </>
-            )}
+              <button
+                onClick={() => setIsStartChatModalOpen(true)}
+                className="flex items-center gap-2 px-4 py-2 bg-black hover:bg-gray-800 text-white rounded-xl text-xs font-bold shadow-xs transition-all cursor-pointer"
+              >
+                <MessageSquarePlus size={14} />
+                <span>Start a Conversation</span>
+              </button>
+            ) : null}
           </div>
         )}
 

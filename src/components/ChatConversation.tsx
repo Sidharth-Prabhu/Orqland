@@ -14,7 +14,6 @@ import {
   Check,
   CheckCheck,
   Clock,
-  FileText,
   ExternalLink,
   Trash2,
   Ban,
@@ -33,6 +32,7 @@ import { AttachmentModal } from '@/components/chat/AttachmentModal';
 import { LocationModal } from '@/components/chat/LocationModal';
 import { ImageViewerModal } from '@/components/chat/ImageViewerModal';
 import { PdfViewerModal } from '@/components/chat/PdfViewerModal';
+import { PdfThumbnail } from '@/components/chat/PdfThumbnail';
 import { UserAvatar } from '@/components/ui/UserAvatar';
 
 interface ChatConversationProps {
@@ -184,6 +184,11 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSend();
+    } else if (e.key === 'Escape') {
+      if (onBackToList) {
+        e.preventDefault();
+        onBackToList();
+      }
     }
   };
 
@@ -420,37 +425,6 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
         </div>
       </div>
 
-      {/* Ended Chat Permanent Notice with Re-open Action */}
-      {isChatEnded && (
-        <div className="bg-red-50/80 border-b border-red-100 px-4 sm:px-6 py-2.5 flex flex-wrap items-center justify-between gap-3 text-xs text-red-900">
-          <div className="flex items-center gap-2 min-w-0">
-            <Lock size={15} className="text-red-600 flex-shrink-0" />
-            <span className="leading-tight">
-              This chat session is closed. <strong>You can re-enable the chat to chat again.</strong>
-            </span>
-          </div>
-
-          {onReopenChat && (
-            <button
-              type="button"
-              disabled={isActionSubmitting}
-              onClick={async () => {
-                setIsActionSubmitting(true);
-                try {
-                  await onReopenChat(conversation.id);
-                } finally {
-                  setIsActionSubmitting(false);
-                }
-              }}
-              className="px-3.5 py-1.5 rounded-full bg-red-600 hover:bg-red-700 text-white font-bold text-[11px] shadow-xs transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50 flex-shrink-0"
-            >
-              <RefreshCw size={12} className={isActionSubmitting ? 'animate-spin' : ''} />
-              <span>Re-open Chat</span>
-            </button>
-          )}
-        </div>
-      )}
-
       {/* Messages Timeline (Centered readable column) */}
       <div
         ref={messagesContainerRef}
@@ -595,14 +569,13 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
                                 className="relative flex-shrink-0 w-36 h-28 sm:w-44 sm:h-32 rounded-xl overflow-hidden bg-white/95 border border-black/10 cursor-pointer group/pdf hover:ring-2 hover:ring-blue-400/80 transition-all shadow-xs flex flex-col"
                                 title="Click to view PDF document"
                               >
-                                {/* PDF visual preview area */}
-                                <div className="flex-1 bg-red-50/70 flex flex-col items-center justify-center relative overflow-hidden p-2 text-center">
-                                  <div className="w-10 h-10 rounded-xl bg-white text-red-600 flex items-center justify-center shadow-2xs group-hover/pdf:scale-110 transition-transform">
-                                    <FileText size={22} />
-                                  </div>
-                                  <span className="text-[9px] font-bold text-red-700 bg-red-100/90 px-1.5 py-0.5 rounded-md mt-1">
-                                    PDF Document
-                                  </span>
+                                {/* PDF visual preview area with first-page render */}
+                                <div className="flex-1 relative overflow-hidden bg-gray-100">
+                                  <PdfThumbnail
+                                    url={att.url}
+                                    name={att.name}
+                                    thumbnailUrl={att.thumbnailUrl}
+                                  />
                                 </div>
                                 {/* PDF filename footer */}
                                 <div className="px-2 py-1.5 bg-gray-50 border-t border-gray-100 flex items-center justify-between gap-1 text-gray-900">
@@ -612,7 +585,7 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
                                   <ExternalLink size={11} className="text-gray-400 flex-shrink-0" />
                                 </div>
                               </div>
-                            ) : (
+                            ) : att.url ? (
                               <div
                                 key={att.id || idx}
                                 onClick={() =>
@@ -626,7 +599,7 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
                               >
                                 <Image
                                   src={att.url}
-                                  alt={att.name}
+                                  alt={att.name || 'Image'}
                                   fill
                                   className="object-cover transition-transform duration-200 group-hover/item:scale-105"
                                   unoptimized
@@ -635,7 +608,7 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
                                   <Maximize2 size={14} className="text-white drop-shadow-md" />
                                 </div>
                               </div>
-                            )
+                            ) : null
                           ))}
                         </div>
                       </div>
@@ -647,7 +620,7 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
                             <AlertTriangle size={14} className="text-yellow-300 flex-shrink-0" />
                             <span>Attachment expired and permanently deleted.</span>
                           </div>
-                        ) : msg.attachment.type === 'image' ? (
+                        ) : msg.attachment.type === 'image' && msg.attachment.url ? (
                           /* Single Image Attachment with Click-to-Enlarge */
                           <div>
                             <div
@@ -673,7 +646,7 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
                             >
                               <Image
                                 src={msg.attachment.url}
-                                alt={msg.attachment.name}
+                                alt={msg.attachment.name || 'Image'}
                                 width={320}
                                 height={200}
                                 className="object-cover rounded-xl transition-transform duration-200 group-hover/img:scale-[1.02]"
@@ -709,43 +682,34 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
                                 });
                               }
                             }}
-                            className={`flex items-center justify-between gap-3 p-2.5 rounded-xl cursor-pointer transition-all group/pdf border ${
-                              isMe
-                                ? 'bg-black/10 hover:bg-black/15 border-white/10'
-                                : 'bg-black/[0.03] hover:bg-black/[0.06] border-black/5'
-                            }`}
+                            className="w-56 sm:w-64 rounded-xl overflow-hidden bg-white text-gray-900 border border-black/10 shadow-xs cursor-pointer group/pdf hover:ring-2 hover:ring-blue-400/80 transition-all flex flex-col"
                             title="Click to view PDF document"
                           >
-                            <div className="flex items-center gap-2.5 min-w-0">
-                              <div className="w-8 h-8 rounded-lg bg-red-500/20 flex items-center justify-center text-red-500 flex-shrink-0 group-hover/pdf:scale-105 transition-transform">
-                                <FileText size={18} />
-                              </div>
-                              <div className="min-w-0">
-                                <p className="font-bold truncate text-[12px] group-hover/pdf:underline">{msg.attachment.name}</p>
-                                <p className="text-[10px] opacity-75">
+                            {/* PDF first-page preview thumbnail */}
+                            <div className="relative w-full h-40 sm:h-44 bg-gray-100 overflow-hidden">
+                              <PdfThumbnail
+                                url={msg.attachment.url}
+                                name={msg.attachment.name}
+                                thumbnailUrl={msg.attachment.thumbnailUrl}
+                              />
+                            </div>
+
+                            {/* Card Footer with Filename, Size & Open Link */}
+                            <div className="p-2.5 bg-gray-50 flex items-center justify-between gap-2 border-t border-gray-100">
+                              <div className="min-w-0 flex-1">
+                                <p className="font-bold truncate text-[12px] text-gray-900 group-hover/pdf:underline leading-tight">
+                                  {msg.attachment.name}
+                                </p>
+                                <p className="text-[10px] text-gray-500 truncate mt-0.5">
                                   {msg.attachment.size ? `${(msg.attachment.size / 1024).toFixed(1)} KB • ` : ''}PDF Document
                                 </p>
                               </div>
+
+                              <span className="flex items-center gap-1 text-[11px] font-bold text-blue-600 flex-shrink-0 group-hover/pdf:translate-x-0.5 transition-transform">
+                                <span>Open</span>
+                                <ExternalLink size={11} />
+                              </span>
                             </div>
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setPreviewPdf({
-                                  url: msg.attachment!.url,
-                                  name: msg.attachment!.name,
-                                  size: msg.attachment!.size,
-                                });
-                              }}
-                              className={`px-3 py-1.5 font-bold rounded-lg text-[11px] flex items-center gap-1.5 shadow-sm transition-all flex-shrink-0 cursor-pointer ${
-                                isMe
-                                  ? 'bg-white text-black hover:bg-gray-100'
-                                  : 'bg-black text-white hover:bg-gray-800'
-                              }`}
-                            >
-                              <span>Open PDF</span>
-                              <ExternalLink size={11} />
-                            </button>
                           </div>
                         ) : msg.attachment.type === 'location' ? (
                           /* Location Sharing Attachment - WhatsApp-style map snippet & info card */
@@ -791,16 +755,6 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
                                       <MapPin size={32} />
                                     </div>
                                   )}
-
-                                  {/* Center WhatsApp-style Red Pin Overlay */}
-                                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none drop-shadow-md">
-                                    <div className="relative -top-2 flex flex-col items-center animate-bounce">
-                                      <div className="w-8 h-8 rounded-full bg-red-600 text-white flex items-center justify-center shadow-lg ring-2 ring-white">
-                                        <MapPin size={18} fill="currentColor" />
-                                      </div>
-                                      <div className="w-2 h-2 rounded-full bg-black/40 blur-[1px] mt-0.5" />
-                                    </div>
-                                  </div>
 
                                   {/* Live Location Pill Badge */}
                                   <div className="absolute top-2 left-2 px-2 py-0.5 bg-black/75 backdrop-blur-xs text-white rounded-md text-[9px] font-bold flex items-center gap-1 shadow-xs pointer-events-none">
@@ -885,9 +839,13 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
           <div className="flex flex-col items-center justify-center gap-2 py-1">
             <div className="flex items-center gap-2 px-4 py-1.5 rounded-full bg-red-50 border border-red-200 text-red-700 text-[11px] font-semibold">
               <Lock size={12} className="text-red-600" />
-              <span>Chat session closed • You can re-enable the chat to chat again</span>
+              <span>
+                {!isBusiness && onReopenChat
+                  ? 'Chat session closed • You can re-open the chat session to continue the conversation'
+                  : 'Chat session ended by client • Communication connection closed'}
+              </span>
             </div>
-            {onReopenChat && (
+            {!isBusiness && onReopenChat && (
               <button
                 type="button"
                 disabled={isActionSubmitting}

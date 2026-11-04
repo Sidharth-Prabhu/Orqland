@@ -105,6 +105,7 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
   const [previewImage, setPreviewImage] = useState<{ url: string; name: string } | null>(null);
   const [previewPdf, setPreviewPdf] = useState<{ url: string; name: string; size?: number } | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [isSafetyNoticeDismissed, setIsSafetyNoticeDismissed] = useState(false);
 
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -229,7 +230,7 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
 
   const handleSendLocation = async (attachment: ChatAttachment) => {
     if (isChatEnded) return;
-    onSendMessage('Shared location coordinates', attachment);
+    onSendMessage('', attachment);
   };
 
   // Render delivery status icon
@@ -269,14 +270,25 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
   return (
     <div className={`flex-1 flex flex-col h-full bg-white relative min-w-0 ${className}`}>
       {/* Safety Notice & Disclaimer Banner */}
-      <div className="bg-amber-50/90 border-b border-amber-200/70 px-3 sm:px-4 py-1.5 sm:py-2 flex items-center justify-between text-[10px] sm:text-[11px] text-amber-900 z-10 flex-shrink-0">
-        <div className="flex items-center gap-2 min-w-0">
-          <ShieldAlert size={14} className="text-amber-600 flex-shrink-0" />
-          <span className="leading-snug">
-            <strong>Orqland Safety Notice:</strong> Orqland will never ask for OTPs, passwords, PINs, or bank account numbers through chat. Never share personal mobile numbers or confidential credentials.
-          </span>
+      {!isSafetyNoticeDismissed && (
+        <div className="bg-amber-50/90 border-b border-amber-200/70 px-3 sm:px-4 py-1.5 sm:py-2 flex items-center justify-between gap-3 text-[10px] sm:text-[11px] text-amber-900 z-10 flex-shrink-0 animate-in fade-in duration-150">
+          <div className="flex items-center gap-2 min-w-0">
+            <ShieldAlert size={14} className="text-amber-600 flex-shrink-0" />
+            <span className="leading-snug">
+              <strong>Orqland Safety Notice:</strong> Orqland will never ask for OTPs, passwords, PINs, or bank account numbers through chat. Never share personal mobile numbers or confidential credentials.
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setIsSafetyNoticeDismissed(true)}
+            className="p-1 -mr-1 text-amber-700/70 hover:text-amber-900 hover:bg-amber-100/80 rounded-md transition-colors cursor-pointer flex-shrink-0"
+            title="Dismiss notice"
+            aria-label="Dismiss notice"
+          >
+            <X size={14} />
+          </button>
         </div>
-      </div>
+      )}
 
       {/* Top Header Bar */}
       <div className="h-[64px] sm:h-[70px] border-b border-gray-200 px-3 sm:px-5 flex items-center justify-between flex-shrink-0 bg-white">
@@ -534,260 +546,272 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
                         </div>
                       )}
 
-                      {/* Message Body */}
-                      <div
-                        className={`rounded-2xl ${
-                          // If message is purely attachment(s) without text caption, keep padding minimal so the bubble forms a slim, sleek border
-                          !msg.content && ((msg.attachments && msg.attachments.length > 0) || msg.attachment)
-                            ? 'p-1 text-xs leading-relaxed'
-                            : 'px-3 py-1.5 text-xs leading-snug space-y-1'
-                        } ${
-                          isMe
-                            ? 'bg-[#0066ff] text-white shadow-xs'
-                            : 'bg-[#f4f5f7] text-gray-800'
-                        }`}
-                      >
-                    {/* Content text */}
-                    {msg.content && <p className="whitespace-pre-wrap">{msg.content}</p>}
+                      {/* Message Body (Styling matching top bar #f6f7f9 with sleek crisp borders) */}
+                      {(() => {
+                        const isLocation = msg.attachment?.type === 'location';
+                        const isAutoLocationText = msg.content === 'Shared location coordinates';
+                        const displayContent = isAutoLocationText ? null : msg.content;
+                        const hasMediaOnly = !displayContent && ((msg.attachments && msg.attachments.length > 0) || msg.attachment);
 
-                    {/* Attachments Display */}
-                    {msg.attachments && msg.attachments.length > 0 ? (
-                      /* Attachments (Images and/or PDFs) in a single line horizontal scroll */
-                      <div className={msg.content ? `mt-1 pt-1 border-t ${isMe ? 'border-white/10' : 'border-black/[0.04]'}` : ''}>
-                        <div className="flex items-center gap-2 overflow-x-auto py-0.5 scrollbar-thin max-w-full">
-                          {msg.attachments.map((att, idx) => (
-                            att.type === 'pdf' ? (
-                              <div
-                                key={att.id || idx}
-                                onClick={() =>
-                                  setPreviewPdf({
-                                    url: att.url,
-                                    name: att.name,
-                                    size: att.size,
-                                  })
-                                }
-                                className="relative flex-shrink-0 w-36 h-28 sm:w-44 sm:h-32 rounded-xl overflow-hidden bg-white/95 border border-black/10 cursor-pointer group/pdf hover:ring-2 hover:ring-blue-400/80 transition-all shadow-xs flex flex-col"
-                                title="Click to view PDF document"
-                              >
-                                {/* PDF visual preview area with first-page render */}
-                                <div className="flex-1 relative overflow-hidden bg-gray-100">
-                                  <PdfThumbnail
-                                    url={att.url}
-                                    name={att.name}
-                                    thumbnailUrl={att.thumbnailUrl}
-                                  />
-                                </div>
-                                {/* PDF filename footer */}
-                                <div className="px-2 py-1.5 bg-gray-50 border-t border-gray-100 flex items-center justify-between gap-1 text-gray-900">
-                                  <span className="text-[11px] font-bold truncate group-hover/pdf:underline leading-tight">
-                                    {att.name}
-                                  </span>
-                                  <ExternalLink size={11} className="text-gray-400 flex-shrink-0" />
-                                </div>
-                              </div>
-                            ) : att.url ? (
-                              <div
-                                key={att.id || idx}
-                                onClick={() =>
-                                  setPreviewImage({
-                                    url: att.url,
-                                    name: att.name,
-                                  })
-                                }
-                                className="relative flex-shrink-0 w-24 h-24 sm:w-28 sm:h-28 rounded-xl overflow-hidden bg-black/10 cursor-pointer group/item hover:ring-1 hover:ring-white/30 transition-all shadow-2xs"
-                                title="Click to view image"
-                              >
-                                <Image
-                                  src={att.url}
-                                  alt={att.name || 'Image'}
-                                  fill
-                                  className="object-cover transition-transform duration-200 group-hover/item:scale-105"
-                                  unoptimized
-                                />
-                                <div className="absolute inset-0 bg-black/0 group-hover/item:bg-black/20 transition-all flex items-center justify-center opacity-0 group-hover/item:opacity-100">
-                                  <Maximize2 size={14} className="text-white drop-shadow-md" />
-                                </div>
-                              </div>
-                            ) : null
-                          ))}
-                        </div>
-                      </div>
-                    ) : msg.attachment ? (
-                      <div className={msg.content ? `mt-1 pt-1 border-t ${isMe ? 'border-white/10' : 'border-black/[0.04]'}` : ''}>
-                        {/* If Expired: */}
-                        {msg.attachment.isExpired ? (
-                          <div className="flex items-center gap-2 text-[11px] p-2 bg-black/10 rounded-xl text-white/80">
-                            <AlertTriangle size={14} className="text-yellow-300 flex-shrink-0" />
-                            <span>Attachment expired and permanently deleted.</span>
-                          </div>
-                        ) : msg.attachment.type === 'image' && msg.attachment.url ? (
-                          /* Single Image Attachment with Click-to-Enlarge */
-                          <div>
-                            <div
-                              onClick={() =>
-                                setPreviewImage({
-                                  url: msg.attachment!.url,
-                                  name: msg.attachment!.name,
-                                })
-                              }
-                              role="button"
-                              tabIndex={0}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter' || e.key === ' ') {
-                                  e.preventDefault();
-                                  setPreviewImage({
-                                    url: msg.attachment!.url,
-                                    name: msg.attachment!.name,
-                                  });
-                                }
-                              }}
-                              className="rounded-xl overflow-hidden relative max-w-sm max-h-60 bg-black/10 cursor-pointer group/img transition-all hover:ring-1 hover:ring-white/30"
-                              title="Click to view larger image"
-                            >
-                              <Image
-                                src={msg.attachment.url}
-                                alt={msg.attachment.name || 'Image'}
-                                width={320}
-                                height={200}
-                                className="object-cover rounded-xl transition-transform duration-200 group-hover/img:scale-[1.02]"
-                                unoptimized
-                              />
-                              <div className="absolute inset-0 bg-black/0 group-hover/img:bg-black/30 transition-all flex items-center justify-center opacity-0 group-hover/img:opacity-100">
-                                <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-black/70 text-white text-[11px] font-bold backdrop-blur-xs shadow-lg transform translate-y-1 group-hover/img:translate-y-0 transition-all">
-                                  <Maximize2 size={13} />
-                                  <span>Click to enlarge</span>
-                                </span>
-                              </div>
-                            </div>
-                          </div>
-                        ) : msg.attachment.type === 'pdf' ? (
-                          /* PDF Document Attachment - Opens in Built-in PDF Viewer */
+                        return (
                           <div
-                            onClick={() =>
-                              setPreviewPdf({
-                                url: msg.attachment!.url,
-                                name: msg.attachment!.name,
-                                size: msg.attachment!.size,
-                              })
-                            }
-                            role="button"
-                            tabIndex={0}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter' || e.key === ' ') {
-                                e.preventDefault();
-                                setPreviewPdf({
-                                  url: msg.attachment!.url,
-                                  name: msg.attachment!.name,
-                                  size: msg.attachment!.size,
-                                });
-                              }
-                            }}
-                            className="w-56 sm:w-64 rounded-xl overflow-hidden bg-white text-gray-900 border border-black/10 shadow-xs cursor-pointer group/pdf hover:ring-2 hover:ring-blue-400/80 transition-all flex flex-col"
-                            title="Click to view PDF document"
+                            className={`rounded-lg transition-all ${
+                              hasMediaOnly
+                                ? isMe
+                                  ? 'bg-[#f6f7f9] p-[3px] border border-gray-300/80 shadow-xs'
+                                  : 'bg-[#f6f7f9] p-[3px] border border-gray-200/80 shadow-xs'
+                                : `px-3 py-1.5 text-xs leading-snug space-y-1 ${
+                                    isMe
+                                      ? 'bg-[#f6f7f9] text-gray-900 border border-gray-300/90 shadow-2xs'
+                                      : 'bg-[#ffffff] text-gray-800 border border-gray-200/90 shadow-2xs'
+                                  }`
+                            }`}
                           >
-                            {/* PDF first-page preview thumbnail */}
-                            <div className="relative w-full h-40 sm:h-44 bg-gray-100 overflow-hidden">
-                              <PdfThumbnail
-                                url={msg.attachment.url}
-                                name={msg.attachment.name}
-                                thumbnailUrl={msg.attachment.thumbnailUrl}
-                              />
-                            </div>
+                            {/* Content text (omitted if auto-generated location placeholder) */}
+                            {displayContent && <p className="whitespace-pre-wrap">{displayContent}</p>}
 
-                            {/* Card Footer with Filename, Size & Open Link */}
-                            <div className="p-2.5 bg-gray-50 flex items-center justify-between gap-2 border-t border-gray-100">
-                              <div className="min-w-0 flex-1">
-                                <p className="font-bold truncate text-[12px] text-gray-900 group-hover/pdf:underline leading-tight">
-                                  {msg.attachment.name}
-                                </p>
-                                <p className="text-[10px] text-gray-500 truncate mt-0.5">
-                                  {msg.attachment.size ? `${(msg.attachment.size / 1024).toFixed(1)} KB • ` : ''}PDF Document
-                                </p>
+                            {/* Attachments Display */}
+                            {msg.attachments && msg.attachments.length > 0 ? (
+                              /* Attachments (Images and/or PDFs) in a single line horizontal scroll */
+                              <div className={displayContent ? 'mt-1.5 pt-1.5 border-t border-gray-200/80' : ''}>
+                                <div className="flex items-center gap-1.5 overflow-x-auto p-0.5 scrollbar-thin max-w-full">
+                                  {msg.attachments.map((att, idx) => (
+                                    att.type === 'pdf' ? (
+                                      <div
+                                        key={att.id || idx}
+                                        onClick={() =>
+                                          setPreviewPdf({
+                                            url: att.url,
+                                            name: att.name,
+                                            size: att.size,
+                                          })
+                                        }
+                                        className="relative flex-shrink-0 w-36 h-28 sm:w-44 sm:h-32 rounded-md overflow-hidden bg-white text-gray-900 border border-gray-200 shadow-xs cursor-pointer group/pdf hover:border-blue-500 hover:ring-2 hover:ring-blue-100 transition-all flex flex-col"
+                                        title="Click to view PDF document"
+                                      >
+                                        {/* PDF visual preview area with first-page render */}
+                                        <div className="flex-1 relative overflow-hidden bg-gray-50">
+                                          <PdfThumbnail
+                                            url={att.url}
+                                            name={att.name}
+                                            thumbnailUrl={att.thumbnailUrl}
+                                          />
+                                        </div>
+                                        {/* PDF filename footer */}
+                                        <div className="px-2 py-1.5 bg-gray-50 border-t border-gray-100 flex items-center justify-between gap-1 text-gray-900">
+                                          <span className="text-[11px] font-semibold truncate group-hover/pdf:underline leading-tight">
+                                            {att.name}
+                                          </span>
+                                          <span className="flex items-center gap-0.5 text-[10px] font-semibold text-blue-600 flex-shrink-0 group-hover/pdf:translate-x-0.5 transition-transform">
+                                            <ExternalLink size={10} />
+                                          </span>
+                                        </div>
+                                      </div>
+                                    ) : att.url ? (
+                                      <div
+                                        key={att.id || idx}
+                                        onClick={() =>
+                                          setPreviewImage({
+                                            url: att.url,
+                                            name: att.name,
+                                          })
+                                        }
+                                        className="relative flex-shrink-0 w-24 h-24 sm:w-28 sm:h-28 rounded-md overflow-hidden bg-white border border-gray-200 shadow-xs cursor-pointer group/item hover:border-blue-500 hover:ring-2 hover:ring-blue-100 transition-all"
+                                        title="Click to view image"
+                                      >
+                                        <Image
+                                          src={att.url}
+                                          alt={att.name || 'Image'}
+                                          fill
+                                          className="object-cover transition-transform duration-200 group-hover/item:scale-105"
+                                          unoptimized
+                                        />
+                                        <div className="absolute inset-0 bg-black/0 group-hover/item:bg-black/20 transition-all flex items-center justify-center opacity-0 group-hover/item:opacity-100">
+                                          <Maximize2 size={14} className="text-white drop-shadow-md" />
+                                        </div>
+                                      </div>
+                                    ) : null
+                                  ))}
+                                </div>
                               </div>
-
-                              <span className="flex items-center gap-1 text-[11px] font-bold text-blue-600 flex-shrink-0 group-hover/pdf:translate-x-0.5 transition-transform">
-                                <span>Open</span>
-                                <ExternalLink size={11} />
-                              </span>
-                            </div>
-                          </div>
-                        ) : msg.attachment.type === 'location' ? (
-                          /* Location Sharing Attachment - WhatsApp-style map snippet & info card */
-                          (() => {
-                            const loc = parseLocationAttachment(msg.attachment);
-                            if (!loc) return null;
-
-                            // Bounding box for Static OSM map tile snippet (~1km around coords)
-                            const lat = loc.lat ?? 0;
-                            const lng = loc.lng ?? 0;
-                            const delta = 0.006;
-                            const bbox = `${lng - delta}%2C${lat - delta / 1.5}%2C${lng + delta}%2C${lat + delta / 1.5}`;
-                            const staticMapSrc = `https://www.openstreetmap.org/export/embed.html?bbox=${bbox}&layer=mapnik&marker=${lat}%2C${lng}`;
-
-                            return (
-                              <div
-                                onClick={() => window.open(loc.mapUrl, '_blank', 'noopener,noreferrer')}
-                                role="button"
-                                tabIndex={0}
-                                onKeyDown={(e) => {
-                                  if (e.key === 'Enter' || e.key === ' ') {
-                                    e.preventDefault();
-                                    window.open(loc.mapUrl, '_blank', 'noopener,noreferrer');
-                                  }
-                                }}
-                                className="w-56 sm:w-64 rounded-xl overflow-hidden bg-white text-gray-900 border border-black/10 shadow-xs cursor-pointer group/map transition-all hover:ring-2 hover:ring-blue-400/80 flex flex-col"
-                                title="Click to open location in Google Maps"
-                              >
-                                {/* WhatsApp-style Map Canvas Snippet */}
-                                <div className="relative w-full h-32 sm:h-36 bg-[#e5e3df] overflow-hidden">
-                                  {loc.lat !== undefined && loc.lng !== undefined ? (
-                                    /* Sized larger with negative bottom margin to cleanly clip out the OSM attribution footer */
-                                    <div className="absolute inset-0 overflow-hidden">
-                                      <iframe
-                                        title="Location Map Snippet"
-                                        src={staticMapSrc}
-                                        className="w-full h-[calc(100%+40px)] -mt-1 -mb-10 border-0 pointer-events-none filter saturate-125 select-none"
-                                        loading="lazy"
+                            ) : msg.attachment ? (
+                              <div className={displayContent ? 'mt-1.5 pt-1.5 border-t border-gray-200/80' : ''}>
+                                {/* If Expired: */}
+                                {msg.attachment.isExpired ? (
+                                  <div className="flex items-center gap-2 text-[11px] p-2 bg-amber-50 border border-amber-200/60 rounded-md text-amber-800">
+                                    <AlertTriangle size={14} className="text-amber-600 flex-shrink-0" />
+                                    <span>Attachment expired and permanently deleted.</span>
+                                  </div>
+                                ) : msg.attachment.type === 'image' && msg.attachment.url ? (
+                                  /* Single Image Attachment with Click-to-Enlarge */
+                                  <div>
+                                    <div
+                                      onClick={() =>
+                                        setPreviewImage({
+                                          url: msg.attachment!.url,
+                                          name: msg.attachment!.name,
+                                        })
+                                      }
+                                      role="button"
+                                      tabIndex={0}
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter' || e.key === ' ') {
+                                          e.preventDefault();
+                                          setPreviewImage({
+                                            url: msg.attachment!.url,
+                                            name: msg.attachment!.name,
+                                          });
+                                        }
+                                      }}
+                                      className="rounded-md overflow-hidden relative max-w-sm max-h-60 bg-white border border-gray-200 shadow-xs cursor-pointer group/img transition-all hover:border-blue-500 hover:ring-2 hover:ring-blue-100"
+                                      title="Click to view larger image"
+                                    >
+                                      <Image
+                                        src={msg.attachment.url}
+                                        alt={msg.attachment.name || 'Image'}
+                                        width={320}
+                                        height={200}
+                                        className="object-cover w-full h-auto transition-transform duration-200 group-hover/img:scale-[1.02]"
+                                        unoptimized
+                                      />
+                                      <div className="absolute inset-0 bg-black/0 group-hover/img:bg-black/30 transition-all flex items-center justify-center opacity-0 group-hover/img:opacity-100">
+                                        <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-black/70 text-white text-[11px] font-bold backdrop-blur-xs shadow-lg transform translate-y-1 group-hover/img:translate-y-0 transition-all">
+                                          <Maximize2 size={13} />
+                                          <span>Click to enlarge</span>
+                                        </span>
+                                      </div>
+                                    </div>
+                                  </div>
+                                ) : msg.attachment.type === 'pdf' ? (
+                                  /* PDF Document Attachment - Opens in Built-in PDF Viewer */
+                                  <div
+                                    onClick={() =>
+                                      setPreviewPdf({
+                                        url: msg.attachment!.url,
+                                        name: msg.attachment!.name,
+                                        size: msg.attachment!.size,
+                                      })
+                                    }
+                                    role="button"
+                                    tabIndex={0}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter' || e.key === ' ') {
+                                        e.preventDefault();
+                                        setPreviewPdf({
+                                          url: msg.attachment!.url,
+                                          name: msg.attachment!.name,
+                                          size: msg.attachment!.size,
+                                        });
+                                      }
+                                    }}
+                                    className="w-56 sm:w-64 rounded-md overflow-hidden bg-white text-gray-900 border border-gray-200 shadow-xs cursor-pointer group/pdf hover:border-blue-500 hover:ring-2 hover:ring-blue-100 transition-all flex flex-col"
+                                    title="Click to view PDF document"
+                                  >
+                                    {/* PDF first-page preview thumbnail */}
+                                    <div className="relative w-full h-40 sm:h-44 bg-gray-50 overflow-hidden">
+                                      <PdfThumbnail
+                                        url={msg.attachment.url}
+                                        name={msg.attachment.name}
+                                        thumbnailUrl={msg.attachment.thumbnailUrl}
                                       />
                                     </div>
-                                  ) : (
-                                    <div className="w-full h-full flex items-center justify-center bg-blue-50 text-blue-600">
-                                      <MapPin size={32} />
+
+                                    {/* Card Footer with Filename, Size & Open Link */}
+                                    <div className="p-2.5 bg-gray-50 flex items-center justify-between gap-2 border-t border-gray-100">
+                                      <div className="min-w-0 flex-1">
+                                        <p className="font-semibold truncate text-[12px] text-gray-900 group-hover/pdf:underline leading-tight">
+                                          {msg.attachment.name}
+                                        </p>
+                                        <p className="text-[10px] text-gray-500 truncate mt-0.5">
+                                          {msg.attachment.size ? `${(msg.attachment.size / 1024).toFixed(1)} KB • ` : ''}PDF Document
+                                        </p>
+                                      </div>
+
+                                      <span className="flex items-center gap-1 text-[11px] font-semibold text-blue-600 flex-shrink-0 group-hover/pdf:translate-x-0.5 transition-transform">
+                                        <span>Open</span>
+                                        <ExternalLink size={11} />
+                                      </span>
                                     </div>
-                                  )}
-
-                                  {/* Live Location Pill Badge */}
-                                  <div className="absolute top-2 left-2 px-2 py-0.5 bg-black/75 backdrop-blur-xs text-white rounded-md text-[9px] font-bold flex items-center gap-1 shadow-xs pointer-events-none">
-                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                                    <span>Location</span>
                                   </div>
-                                </div>
+                                ) : msg.attachment.type === 'location' ? (
+                                  /* Location Sharing Attachment - WhatsApp-style map snippet & info card */
+                                  (() => {
+                                    const loc = parseLocationAttachment(msg.attachment);
+                                    if (!loc) return null;
 
-                                {/* Card Footer with Label, Coordinates & Open Map Link */}
-                                <div className="p-2.5 bg-gray-50 flex items-center justify-between gap-2 border-t border-gray-100">
-                                  <div className="min-w-0 flex-1">
-                                    <p className="font-bold truncate text-[12px] text-gray-900 group-hover/map:underline leading-tight">
-                                      {loc.label}
-                                    </p>
-                                    <p className="text-[10px] text-gray-500 truncate mt-0.5">
-                                      {loc.lat !== undefined && loc.lng !== undefined
-                                        ? `${loc.lat.toFixed(5)}, ${loc.lng.toFixed(5)}`
-                                        : 'View on map'}
-                                    </p>
-                                  </div>
+                                    // Bounding box for Static OSM map tile snippet (~1km around coords)
+                                    const lat = loc.lat ?? 0;
+                                    const lng = loc.lng ?? 0;
+                                    const delta = 0.006;
+                                    const bbox = `${lng - delta}%2C${lat - delta / 1.5}%2C${lng + delta}%2C${lat + delta / 1.5}`;
+                                    const staticMapSrc = `https://www.openstreetmap.org/export/embed.html?bbox=${bbox}&layer=mapnik&marker=${lat}%2C${lng}`;
 
-                                  <span className="flex items-center gap-1 text-[11px] font-bold text-blue-600 flex-shrink-0 group-hover/map:translate-x-0.5 transition-transform">
-                                    <span>Open</span>
-                                    <ExternalLink size={11} />
-                                  </span>
-                                </div>
+                                    return (
+                                      <div
+                                        onClick={() => window.open(loc.mapUrl, '_blank', 'noopener,noreferrer')}
+                                        role="button"
+                                        tabIndex={0}
+                                        onKeyDown={(e) => {
+                                          if (e.key === 'Enter' || e.key === ' ') {
+                                            e.preventDefault();
+                                            window.open(loc.mapUrl, '_blank', 'noopener,noreferrer');
+                                          }
+                                        }}
+                                        className="w-56 sm:w-64 rounded-md overflow-hidden bg-white text-gray-900 border border-gray-200 shadow-xs cursor-pointer group/map transition-all hover:border-blue-500 hover:ring-2 hover:ring-blue-100 flex flex-col"
+                                        title="Click to open location in Google Maps"
+                                      >
+                                        {/* WhatsApp-style Map Canvas Snippet */}
+                                        <div className="relative w-full h-32 sm:h-36 bg-[#e5e3df] overflow-hidden">
+                                          {loc.lat !== undefined && loc.lng !== undefined ? (
+                                            /* Sized larger with negative bottom margin to cleanly clip out the OSM attribution footer */
+                                            <div className="absolute inset-0 overflow-hidden">
+                                              <iframe
+                                                title="Location Map Snippet"
+                                                src={staticMapSrc}
+                                                className="w-full h-[calc(100%+65px)] -mt-1 -mb-16 border-0 pointer-events-none filter saturate-125 select-none"
+                                                loading="lazy"
+                                              />
+                                            </div>
+                                          ) : (
+                                            <div className="w-full h-full flex items-center justify-center bg-blue-50 text-blue-600">
+                                              <MapPin size={32} />
+                                            </div>
+                                          )}
+
+                                          {/* Live Location Pill Badge */}
+                                          <div className="absolute top-2 left-2 px-2 py-0.5 bg-black/75 backdrop-blur-xs text-white rounded-md text-[9px] font-semibold flex items-center gap-1 shadow-xs pointer-events-none">
+                                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                                            <span>Location</span>
+                                          </div>
+                                        </div>
+
+                                        {/* Card Footer with Label, Coordinates & Open Map Link */}
+                                        <div className="p-2.5 bg-gray-50 flex items-center justify-between gap-2 border-t border-gray-100">
+                                          <div className="min-w-0 flex-1">
+                                            <p className="font-semibold truncate text-[12px] text-gray-900 group-hover/map:underline leading-tight">
+                                              {loc.label}
+                                            </p>
+                                            <p className="text-[10px] text-gray-500 truncate mt-0.5">
+                                              {loc.lat !== undefined && loc.lng !== undefined
+                                                ? `${loc.lat.toFixed(5)}, ${loc.lng.toFixed(5)}`
+                                                : 'View on map'}
+                                            </p>
+                                          </div>
+
+                                          <span className="flex items-center gap-1 text-[11px] font-semibold text-blue-600 flex-shrink-0 group-hover/map:translate-x-0.5 transition-transform">
+                                            <span>Open</span>
+                                            <ExternalLink size={11} />
+                                          </span>
+                                        </div>
+                                      </div>
+                                    );
+                                  })()
+                                ) : null}
                               </div>
-                            );
-                          })()
-                        ) : null}
-                      </div>
-                    ) : null}
-                  </div>
+                            ) : null}
+                          </div>
+                        );
+                      })()}
 
                   {/* Failed status retry button */}
                   {isMe && msg.status === 'failed' && onRetryMessage && (

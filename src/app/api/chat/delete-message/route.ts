@@ -33,10 +33,12 @@ export async function POST(req: NextRequest) {
       conversation: updated,
     });
   } catch (error: unknown) {
-    console.error('API /chat/delete-message error:', error);
+    const message = error instanceof Error ? error.message : 'Internal Server Error';
+    console.warn('API /chat/delete-message notice:', message);
+    const status = message.includes('expired') || message.includes('Unauthorized') ? 403 : 500;
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Internal Server Error' },
-      { status: 500 }
+      { error: message },
+      { status }
     );
   }
 }

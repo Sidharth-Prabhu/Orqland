@@ -25,9 +25,12 @@ import {
   X,
   Pencil,
   Copy,
+  FileText,
+  UploadCloud,
 } from 'lucide-react';
 import { Conversation, ChatMessage, ChatAttachment } from '@/types/chat';
-import { isBusinessUser, detectSensitiveContent } from '@/lib/security';
+import { isBusinessUser, detectSensitiveContent, validateAttachmentFile } from '@/lib/security';
+import { generatePdfThumbnail } from '@/lib/pdfThumbnail';
 import { DeleteChatModal } from '@/components/chat/DeleteChatModal';
 import { EndChatModal } from '@/components/chat/EndChatModal';
 import { AttachmentModal } from '@/components/chat/AttachmentModal';
@@ -130,6 +133,120 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
     x: number;
     y: number;
   } | null>(null);
+
+  // Attached files sticking to the typing area
+  const [stagedFiles, setStagedFiles] = useState<
+    Array<{
+      file: File;
+      previewUrl: string;
+      type: 'image' | 'pdf';
+    }>
+  >([]);
+  const [isDragOver, setIsDragOver] = useState(false);
+  const [attachmentError, setAttachmentError] = useState<string | null>(null);
+  const [isSendingAttachments, setIsSendingAttachments] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const dragCounterRef = useRef(0);
+
+  // Helper to validate and stage incoming files (via drag-and-drop or file picker)
+  const stageFiles = async (fileList: FileList | File[] | null) => {
+    if (!fileList || fileList.length === 0 || isChatEnded) return;
+    setAttachmentError(null);
+
+    const incoming = Array.from(fileList);
+    const totalCount = stagedFiles.length + incoming.length;
+
+    if (totalCount > 6) {
+      setAttachmentError('You can attach a maximum of 6 files at once.');
+      return;
+    }
+
+    const validated: Array<{ file: File; previewUrl: string; type: 'image' | 'pdf' }> = [];
+
+    for (const file of incoming) {
+      const validation = validateAttachmentFile(file);
+      if (!validation.valid) {
+        setAttachmentError(validation.error || 'Invalid file format. Please upload JPG, PNG, WebP or PDF.');
+        return;
+      }
+
+      const type = validation.attachmentType === 'pdf' ? 'pdf' : 'image';
+      let previewUrl = '';
+      if (type === 'image') {
+        previewUrl = URL.createObjectURL(file);
+      } else {
+        try {
+          previewUrl = await generatePdfThumbnail(file);
+        } catch {
+          previewUrl = '';
+        }
+      }
+      validated.push({ file, previewUrl, type });
+    }
+
+    setStagedFiles((prev) => [...prev, ...validated]);
+  };
+
+  const removeStagedFile = (index: number) => {
+    setStagedFiles((prev) => {
+      const target = prev[index];
+      if (target?.previewUrl && target.previewUrl.startsWith('blob:')) {
+        URL.revokeObjectURL(target.previewUrl);
+      }
+      return prev.filter((_, i) => i !== index);
+    });
+    setAttachmentError(null);
+  };
+
+  const clearStagedFiles = () => {
+    stagedFiles.forEach((f) => {
+      if (f.previewUrl && f.previewUrl.startsWith('blob:')) {
+        URL.revokeObjectURL(f.previewUrl);
+      }
+    });
+    setStagedFiles([]);
+    setAttachmentError(null);
+  };
+
+  // Drag and drop events for the chat window
+  const handleDragEnter = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (isChatEnded) return;
+    dragCounterRef.current += 1;
+    if (e.dataTransfer.items && e.dataTransfer.items.length > 0) {
+      setIsDragOver(true);
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (isChatEnded) return;
+    if (!isDragOver) setIsDragOver(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current -= 1;
+    if (dragCounterRef.current <= 0) {
+      dragCounterRef.current = 0;
+      setIsDragOver(false);
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current = 0;
+    setIsDragOver(false);
+    if (isChatEnded) return;
+
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      stageFiles(e.dataTransfer.files);
+    }
+  };
 
   // Close context menus on outside click, window scroll or Escape
   useEffect(() => {
@@ -325,16 +442,67 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
 
   const sensitiveCheck = detectSensitiveContent(inputText);
 
-  const handleSend = (e?: React.FormEvent) => {
+  const handleSend = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if (isChatEnded) return;
-    if (!inputText.trim()) return;
+    if (isChatEnded || isSendingAttachments) return;
+
+    // Must have either text or staged files
+    if (!inputText.trim() && stagedFiles.length === 0) return;
 
     if (sensitiveCheck.isBlocked) {
       alert(
         sensitiveCheck.error ||
           'Security Policy Violation: Sharing credit/debit card numbers, OTPs, passwords, PINs, or bank account details through chat is strictly prohibited.'
       );
+      return;
+    }
+
+    // If there are staged files, convert to ChatAttachment and send
+    if (stagedFiles.length > 0) {
+      setIsSendingAttachments(true);
+      try {
+        const readPromises = stagedFiles.map(
+          (item) =>
+            new Promise<ChatAttachment>((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onload = async () => {
+                const base64Data = reader.result as string;
+                let thumb = item.previewUrl;
+                if (item.type === 'pdf' && (!thumb || thumb.startsWith('blob:'))) {
+                  try {
+                    thumb = await generatePdfThumbnail(item.file);
+                  } catch {
+                    thumb = '';
+                  }
+                }
+                const now = Date.now();
+                resolve({
+                  id: `att-${now}-${Math.random().toString(36).slice(2, 6)}`,
+                  type: item.type,
+                  name: item.file.name,
+                  url: base64Data,
+                  thumbnailUrl: thumb || undefined,
+                  size: item.file.size,
+                  mimeType: item.file.type,
+                  uploadedAt: now,
+                  expiresAt: now + 48 * 60 * 60 * 1000,
+                });
+              };
+              reader.onerror = () => reject(new Error(`Failed to read file ${item.file.name}`));
+              reader.readAsDataURL(item.file);
+            })
+        );
+
+        const attachments = await Promise.all(readPromises);
+        onSendMessage(inputText.trim(), attachments[0], attachments);
+        setInputText('');
+        clearStagedFiles();
+      } catch (err) {
+        console.error('Failed to send attachments:', err);
+        setAttachmentError('Failed to process attachments. Please try again.');
+      } finally {
+        setIsSendingAttachments(false);
+      }
       return;
     }
 
@@ -429,7 +597,42 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
   };
 
   return (
-    <div className={`flex-1 flex flex-col h-full bg-white relative min-w-0 ${className}`}>
+    <div
+      onDragEnter={handleDragEnter}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+      className={`flex-1 flex flex-col h-full bg-white relative min-w-0 ${className}`}
+    >
+      {/* Hidden File Input for Direct Media Upload (Attaches to Typing Area) */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        accept="image/jpeg,image/png,image/webp,application/pdf"
+        className="hidden"
+        onChange={(e) => {
+          stageFiles(e.target.files);
+          if (fileInputRef.current) fileInputRef.current.value = '';
+        }}
+      />
+
+      {/* Drag & Drop Full-Area Overlay */}
+      {isDragOver && (
+        <div className="absolute inset-0 z-40 bg-indigo-50/90 backdrop-blur-xs border-2 border-dashed border-indigo-400 rounded-xl flex flex-col items-center justify-center p-6 select-none pointer-events-none animate-in fade-in zoom-in-95 duration-150">
+          <div className="w-16 h-16 rounded-3xl bg-indigo-100 text-indigo-600 flex items-center justify-center mb-3 shadow-sm ring-4 ring-indigo-50">
+            <UploadCloud size={32} />
+          </div>
+          <h3 className="text-base font-bold text-gray-900">Drop media to attach</h3>
+          <p className="text-xs text-gray-500 mt-1 max-w-xs text-center">
+            Upload images (JPG, PNG, WebP) or PDF documents straight to your message
+          </p>
+          <div className="mt-3 px-3 py-1 rounded-full bg-indigo-600/10 text-indigo-700 text-[11px] font-semibold">
+            Up to 6 files per message
+          </div>
+        </div>
+      )}
+
       {/* Safety Notice & Disclaimer Banner */}
       {!isSafetyNoticeDismissed && (
         <div className="bg-amber-50/90 border-b border-amber-200/70 px-3 sm:px-4 py-1.5 sm:py-2 flex items-center justify-between gap-3 text-[10px] sm:text-[11px] text-amber-900 z-10 flex-shrink-0 animate-in fade-in duration-150">
@@ -541,20 +744,40 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
             </button>
           )}
 
-          {/* Options Dropdown: Clear Chat controls (Business & Client) */}
-          {onDeleteChat && (
-            <div className="relative" ref={optionsDropdownRef}>
-              <button
-                onClick={() => setShowOptionsDropdown(!showOptionsDropdown)}
-                className="p-1.5 hover:bg-gray-100 rounded-xl text-gray-500 hover:text-gray-900 transition-colors cursor-pointer"
-                title="Chat controls"
-              >
-                <MoreVertical size={17} />
-              </button>
+          {/* Options Dropdown: Chat controls (Close Chat, Clear Chat) */}
+          <div className="relative" ref={optionsDropdownRef}>
+            <button
+              onClick={() => setShowOptionsDropdown(!showOptionsDropdown)}
+              className="p-1.5 hover:bg-gray-100 rounded-xl text-gray-500 hover:text-gray-900 transition-colors cursor-pointer"
+              title="Chat controls"
+            >
+              <MoreVertical size={17} />
+            </button>
 
-              {showOptionsDropdown && (
-                <div className="absolute right-0 mt-2 w-52 bg-white rounded-2xl shadow-xl border border-gray-100 p-1.5 z-40 animate-in fade-in zoom-in-95 duration-100">
-                  {/* Clear Chat */}
+            {showOptionsDropdown && (
+              <div className="absolute right-0 mt-2 w-52 bg-white rounded-2xl shadow-xl border border-gray-100 p-1.5 z-40 animate-in fade-in zoom-in-95 duration-100 space-y-0.5">
+                {/* Close Chat (Deselcts conversation and returns to blank slate) */}
+                {onBackToList && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowOptionsDropdown(false);
+                      onBackToList();
+                    }}
+                    className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50 hover:text-gray-900 rounded-xl transition-colors cursor-pointer"
+                  >
+                    <X size={15} className="text-gray-500 flex-shrink-0" />
+                    <div className="text-left leading-tight">
+                      <div className="font-semibold text-gray-800">Close Chat</div>
+                      <div className="text-[10px] text-gray-400 font-normal mt-0.5">
+                        Exit to home screen
+                      </div>
+                    </div>
+                  </button>
+                )}
+
+                {/* Clear Chat */}
+                {onDeleteChat && (
                   <button
                     type="button"
                     onClick={() => {
@@ -571,10 +794,10 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
                       </div>
                     </div>
                   </button>
-                </div>
-              )}
-            </div>
-          )}
+                )}
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -626,20 +849,9 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
                 </button>
               </div>
             </div>
-          ) : (conversation.businessDeletedAt && isBusiness) || (conversation.clientDeletedAt && !isBusiness) ? (
-            <div className="h-full flex flex-col items-center justify-center text-center p-6">
-              <div className="w-12 h-12 rounded-2xl bg-amber-50 border border-amber-200/80 flex items-center justify-center text-amber-600 mb-3 shadow-xs">
-                <Trash2 size={20} />
-              </div>
-              <h4 className="text-xs font-bold text-gray-800">
-                Conversation History Cleared on Your Side
-              </h4>
-              <p className="text-[11px] text-gray-500 max-w-sm mt-1.5 leading-relaxed">
-                Existing messages remain visible to {conversation.participant.name}. Your communication connection remains active and you can send a message below anytime.
-              </p>
-            </div>
           ) : (
-            <div className="h-full flex flex-col items-center justify-center text-center p-6 text-gray-400">
+            /* Plain slate clean state */
+            <div className="h-full flex flex-col items-center justify-center text-center p-6 text-gray-400 select-none">
               <p className="text-xs font-semibold text-gray-600">No messages yet in this conversation</p>
               <p className="text-[11px] text-gray-400 mt-1">
                 Say hello or share an inquiry to start exchanging messages.
@@ -648,13 +860,6 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
           )
         ) : (
           <>
-            {((conversation.businessDeletedAt && isBusiness) || (conversation.clientDeletedAt && !isBusiness)) && (
-              <div className="flex items-center justify-center mb-2">
-                <span className="text-[10px] font-semibold text-amber-800/80 bg-amber-50 border border-amber-200/60 px-3 py-1 rounded-full">
-                  Earlier messages cleared from your view • Connection remains active
-                </span>
-              </div>
-            )}
             {(() => {
               const filteredMessages = conversation.messages.filter((msg) => {
                 if (!searchQuery.trim()) return true;
@@ -684,8 +889,8 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
                   <div
                     key={msg.id}
                     id={`msg-${msg.id}`}
-                    className={`flex items-start gap-2.5 group ${
-                      isMe ? 'flex-row-reverse' : ''
+                    className={`w-full flex items-start gap-2.5 group ${
+                      isMe ? 'flex-row-reverse justify-start' : 'justify-start'
                     } ${isSameSenderAsPrev ? 'mt-0.5' : 'mt-2'}`}
                   >
                     {/* Avatar - display for first message of stack, reserve invisible slot for continuous messages */}
@@ -702,7 +907,7 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
                     </div>
 
                     {/* Bubble Container */}
-                    <div className={`max-w-[85%] sm:max-w-[78%] md:max-w-[72%] flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
+                    <div className={`w-fit max-w-[85%] sm:max-w-[78%] md:max-w-[72%] flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
                       {/* Sender Header - only at the top of the stack */}
                       {showHeader && (
                         <div className="flex items-center gap-1.5 mb-0.5">
@@ -762,7 +967,7 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
                             onContextMenu={(e) => handleMessageContextMenu(e, msg)}
                             className={
                               hasMediaOnly
-                                ? 'p-0 bg-transparent border-0 shadow-none'
+                                ? `p-0 bg-transparent border-0 shadow-none flex flex-col ${isMe ? 'items-end' : 'items-start'}`
                                 : `rounded-lg px-3 py-1.5 text-xs leading-snug space-y-1 transition-all ${
                                     isMe
                                       ? 'bg-[#ebedf7] text-gray-900 border border-indigo-100/60 shadow-2xs'
@@ -821,7 +1026,7 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
                             )}
 
                             {/* Attachments Display */}
-                            {msg.attachments && msg.attachments.length > 0 ? (
+                            {msg.attachments && msg.attachments.length > 1 ? (
                               /* Dynamic Grid: 2x2 for 4 items, 3x3 for 5+ items, 2-col for 2 items, 3-col for 3 */
                               (() => {
                                 const count = msg.attachments.length;
@@ -839,8 +1044,8 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
                                   : 'h-28 sm:h-32';
 
                                 return (
-                                  <div className={displayContent ? 'mt-1.5 pt-1.5 border-t border-gray-200/80' : ''}>
-                                    <div className={gridClass}>
+                                  <div className={`w-full flex flex-col ${isMe ? 'items-end' : 'items-start'} ${displayContent ? 'mt-1.5 pt-1.5 border-t border-gray-200/80' : ''}`}>
+                                    <div className={`${gridClass} ${isMe ? 'ml-auto' : ''}`}>
                                       {msg.attachments.map((att, idx) => (
                                         att.type === 'pdf' ? (
                                           <div
@@ -882,7 +1087,7 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
                                                 name: att.name,
                                               })
                                             }
-                                            className={`relative w-full ${itemHeightClass} rounded-md overflow-hidden bg-gray-100 border border-gray-200 shadow-xs cursor-pointer group/item hover:border-blue-500 hover:ring-2 hover:ring-blue-100 transition-all`}
+                                            className={`relative w-full ${itemHeightClass} rounded-lg overflow-hidden bg-gray-100 border border-black/10 shadow-[0_1px_2px_rgba(0,0,0,0.06)] cursor-pointer group/item hover:border-black/25 transition-all`}
                                             title="Click to view image"
                                           >
                                             <Image
@@ -893,6 +1098,8 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
                                               className="object-cover transition-transform duration-200 group-hover/item:scale-105"
                                               unoptimized
                                             />
+                                            {/* WhatsApp-style subtle inner shadow/border overlay */}
+                                            <div className="absolute inset-0 ring-1 ring-inset ring-black/10 rounded-lg pointer-events-none" />
                                             <div className="absolute inset-0 bg-black/0 group-hover/item:bg-black/20 transition-all flex items-center justify-center opacity-0 group-hover/item:opacity-100">
                                               <Maximize2 size={14} className="text-white drop-shadow-md" />
                                             </div>
@@ -903,22 +1110,68 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
                                   </div>
                                 );
                               })()
-                            ) : msg.attachment ? (
-                              <div className={displayContent ? 'mt-1.5 pt-1.5 border-t border-gray-200/80' : ''}>
-                                {/* If Expired: */}
-                                {msg.attachment.isExpired ? (
-                                  <div className="flex items-center gap-2 text-[11px] p-2 bg-amber-50 border border-amber-200/60 rounded-md text-amber-800">
-                                    <AlertTriangle size={14} className="text-amber-600 flex-shrink-0" />
-                                    <span>Attachment expired and permanently deleted.</span>
-                                  </div>
-                                ) : msg.attachment.type === 'image' && msg.attachment.url ? (
-                                  /* Single Image Attachment with Click-to-Enlarge */
-                                  <div>
+                            ) : (() => {
+                              const singleAtt = (msg.attachments && msg.attachments.length === 1) ? msg.attachments[0] : msg.attachment;
+                              if (!singleAtt) return null;
+
+                              return (
+                                <div className={`w-full flex flex-col ${isMe ? 'items-end' : 'items-start'} ${displayContent ? 'mt-1.5 pt-1.5 border-t border-gray-200/80' : ''}`}>
+                                  {/* If Expired: */}
+                                  {singleAtt.isExpired ? (
+                                    <div className="flex items-center gap-2 text-[11px] p-2 bg-amber-50 border border-amber-200/60 rounded-md text-amber-800">
+                                      <AlertTriangle size={14} className="text-amber-600 flex-shrink-0" />
+                                      <span>Attachment expired and permanently deleted.</span>
+                                    </div>
+                                  ) : singleAtt.type === 'image' && singleAtt.url ? (
+                                    /* Single Image Attachment with Click-to-Enlarge */
+                                    <div className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
+                                      <div
+                                        onClick={() =>
+                                          setPreviewImage({
+                                            url: singleAtt.url,
+                                            name: singleAtt.name,
+                                          })
+                                        }
+                                        role="button"
+                                        tabIndex={0}
+                                        onKeyDown={(e) => {
+                                          if (e.key === 'Enter' || e.key === ' ') {
+                                            e.preventDefault();
+                                            setPreviewImage({
+                                              url: singleAtt.url,
+                                              name: singleAtt.name,
+                                            });
+                                          }
+                                        }}
+                                        className={`rounded-lg overflow-hidden relative max-w-sm max-h-60 bg-white border border-black/10 shadow-[0_1px_2px_rgba(0,0,0,0.06)] cursor-pointer group/img transition-all hover:border-black/25 ${isMe ? 'ml-auto' : ''}`}
+                                        title="Click to view larger image"
+                                      >
+                                        <Image
+                                          src={singleAtt.url}
+                                          alt={singleAtt.name || 'Image'}
+                                          width={320}
+                                          height={200}
+                                          className="object-cover w-full h-auto transition-transform duration-200 group-hover/img:scale-[1.02]"
+                                          unoptimized
+                                        />
+                                        {/* WhatsApp-style subtle inner border overlay */}
+                                        <div className="absolute inset-0 ring-1 ring-inset ring-black/10 rounded-lg pointer-events-none" />
+                                        <div className="absolute inset-0 bg-black/0 group-hover/img:bg-black/30 transition-all flex items-center justify-center opacity-0 group-hover/img:opacity-100">
+                                          <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-black/70 text-white text-[11px] font-bold backdrop-blur-xs shadow-lg transform translate-y-1 group-hover/img:translate-y-0 transition-all">
+                                            <Maximize2 size={13} />
+                                            <span>Click to enlarge</span>
+                                          </span>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  ) : singleAtt.type === 'pdf' ? (
+                                    /* PDF Document Attachment - Opens in Built-in PDF Viewer */
                                     <div
                                       onClick={() =>
-                                        setPreviewImage({
-                                          url: msg.attachment!.url,
-                                          name: msg.attachment!.name,
+                                        setPreviewPdf({
+                                          url: singleAtt.url,
+                                          name: singleAtt.name,
+                                          size: singleAtt.size,
                                         })
                                       }
                                       role="button"
@@ -926,158 +1179,119 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
                                       onKeyDown={(e) => {
                                         if (e.key === 'Enter' || e.key === ' ') {
                                           e.preventDefault();
-                                          setPreviewImage({
-                                            url: msg.attachment!.url,
-                                            name: msg.attachment!.name,
+                                          setPreviewPdf({
+                                            url: singleAtt.url,
+                                            name: singleAtt.name,
+                                            size: singleAtt.size,
                                           });
                                         }
                                       }}
-                                      className="rounded-md overflow-hidden relative max-w-sm max-h-60 bg-white border border-gray-200 shadow-xs cursor-pointer group/img transition-all hover:border-blue-500 hover:ring-2 hover:ring-blue-100"
-                                      title="Click to view larger image"
+                                      className={`w-56 sm:w-64 rounded-md overflow-hidden bg-white text-gray-900 border border-gray-200 shadow-xs cursor-pointer group/pdf hover:border-blue-500 hover:ring-2 hover:ring-blue-100 transition-all flex flex-col ${isMe ? 'ml-auto' : ''}`}
+                                      title="Click to view PDF document"
                                     >
-                                      <Image
-                                        src={msg.attachment.url}
-                                        alt={msg.attachment.name || 'Image'}
-                                        width={320}
-                                        height={200}
-                                        className="object-cover w-full h-auto transition-transform duration-200 group-hover/img:scale-[1.02]"
-                                        unoptimized
-                                      />
-                                      <div className="absolute inset-0 bg-black/0 group-hover/img:bg-black/30 transition-all flex items-center justify-center opacity-0 group-hover/img:opacity-100">
-                                        <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-black/70 text-white text-[11px] font-bold backdrop-blur-xs shadow-lg transform translate-y-1 group-hover/img:translate-y-0 transition-all">
-                                          <Maximize2 size={13} />
-                                          <span>Click to enlarge</span>
+                                      {/* PDF first-page preview thumbnail */}
+                                      <div className="relative w-full h-40 sm:h-44 bg-gray-50 overflow-hidden">
+                                        <PdfThumbnail
+                                          url={singleAtt.url}
+                                          name={singleAtt.name}
+                                          thumbnailUrl={singleAtt.thumbnailUrl}
+                                        />
+                                      </div>
+
+                                      {/* Card Footer with Filename, Size & Open Link */}
+                                      <div className="p-2.5 bg-gray-50 flex items-center justify-between gap-2 border-t border-gray-100">
+                                        <div className="min-w-0 flex-1">
+                                          <p className="font-semibold truncate text-[12px] text-gray-900 group-hover/pdf:underline leading-tight">
+                                            {singleAtt.name}
+                                          </p>
+                                          <p className="text-[10px] text-gray-500 truncate mt-0.5">
+                                            {singleAtt.size ? `${(singleAtt.size / 1024).toFixed(1)} KB • ` : ''}PDF Document
+                                          </p>
+                                        </div>
+
+                                        <span className="flex items-center gap-1 text-[11px] font-semibold text-blue-600 flex-shrink-0 group-hover/pdf:translate-x-0.5 transition-transform">
+                                          <span>Open</span>
+                                          <ExternalLink size={11} />
                                         </span>
                                       </div>
                                     </div>
-                                  </div>
-                                ) : msg.attachment.type === 'pdf' ? (
-                                  /* PDF Document Attachment - Opens in Built-in PDF Viewer */
-                                  <div
-                                    onClick={() =>
-                                      setPreviewPdf({
-                                        url: msg.attachment!.url,
-                                        name: msg.attachment!.name,
-                                        size: msg.attachment!.size,
-                                      })
-                                    }
-                                    role="button"
-                                    tabIndex={0}
-                                    onKeyDown={(e) => {
-                                      if (e.key === 'Enter' || e.key === ' ') {
-                                        e.preventDefault();
-                                        setPreviewPdf({
-                                          url: msg.attachment!.url,
-                                          name: msg.attachment!.name,
-                                          size: msg.attachment!.size,
-                                        });
-                                      }
-                                    }}
-                                    className="w-56 sm:w-64 rounded-md overflow-hidden bg-white text-gray-900 border border-gray-200 shadow-xs cursor-pointer group/pdf hover:border-blue-500 hover:ring-2 hover:ring-blue-100 transition-all flex flex-col"
-                                    title="Click to view PDF document"
-                                  >
-                                    {/* PDF first-page preview thumbnail */}
-                                    <div className="relative w-full h-40 sm:h-44 bg-gray-50 overflow-hidden">
-                                      <PdfThumbnail
-                                        url={msg.attachment.url}
-                                        name={msg.attachment.name}
-                                        thumbnailUrl={msg.attachment.thumbnailUrl}
-                                      />
-                                    </div>
+                                  ) : singleAtt.type === 'location' ? (
+                                    /* Location Sharing Attachment - WhatsApp-style map snippet & info card */
+                                    (() => {
+                                      const loc = parseLocationAttachment(singleAtt);
+                                      if (!loc) return null;
 
-                                    {/* Card Footer with Filename, Size & Open Link */}
-                                    <div className="p-2.5 bg-gray-50 flex items-center justify-between gap-2 border-t border-gray-100">
-                                      <div className="min-w-0 flex-1">
-                                        <p className="font-semibold truncate text-[12px] text-gray-900 group-hover/pdf:underline leading-tight">
-                                          {msg.attachment.name}
-                                        </p>
-                                        <p className="text-[10px] text-gray-500 truncate mt-0.5">
-                                          {msg.attachment.size ? `${(msg.attachment.size / 1024).toFixed(1)} KB • ` : ''}PDF Document
-                                        </p>
-                                      </div>
+                                      // Bounding box for Static OSM map tile snippet (~1km around coords)
+                                      const lat = loc.lat ?? 0;
+                                      const lng = loc.lng ?? 0;
+                                      const delta = 0.006;
+                                      const bbox = `${lng - delta}%2C${lat - delta / 1.5}%2C${lng + delta}%2C${lat + delta / 1.5}`;
+                                      const staticMapSrc = `https://www.openstreetmap.org/export/embed.html?bbox=${bbox}&layer=mapnik&marker=${lat}%2C${lng}`;
 
-                                      <span className="flex items-center gap-1 text-[11px] font-semibold text-blue-600 flex-shrink-0 group-hover/pdf:translate-x-0.5 transition-transform">
-                                        <span>Open</span>
-                                        <ExternalLink size={11} />
-                                      </span>
-                                    </div>
-                                  </div>
-                                ) : msg.attachment.type === 'location' ? (
-                                  /* Location Sharing Attachment - WhatsApp-style map snippet & info card */
-                                  (() => {
-                                    const loc = parseLocationAttachment(msg.attachment);
-                                    if (!loc) return null;
+                                      return (
+                                        <div
+                                          onClick={() => window.open(loc.mapUrl, '_blank', 'noopener,noreferrer')}
+                                          role="button"
+                                          tabIndex={0}
+                                          onKeyDown={(e) => {
+                                            if (e.key === 'Enter' || e.key === ' ') {
+                                              e.preventDefault();
+                                              window.open(loc.mapUrl, '_blank', 'noopener,noreferrer');
+                                            }
+                                          }}
+                                          className={`w-56 sm:w-64 rounded-md overflow-hidden bg-white text-gray-900 border border-gray-200 shadow-xs cursor-pointer group/map transition-all hover:border-blue-500 hover:ring-2 hover:ring-blue-100 flex flex-col ${isMe ? 'ml-auto' : ''}`}
+                                          title="Click to open location in Google Maps"
+                                        >
+                                          {/* WhatsApp-style Map Canvas Snippet */}
+                                          <div className="relative w-full h-32 sm:h-36 bg-[#e5e3df] overflow-hidden">
+                                            {loc.lat !== undefined && loc.lng !== undefined ? (
+                                              /* Sized larger with negative bottom margin to cleanly clip out the OSM attribution footer */
+                                              <div className="absolute inset-0 overflow-hidden">
+                                                <iframe
+                                                  title="Location Map Snippet"
+                                                  src={staticMapSrc}
+                                                  className="w-full h-[calc(100%+65px)] -mt-1 -mb-16 border-0 pointer-events-none filter saturate-125 select-none"
+                                                  loading="lazy"
+                                                />
+                                              </div>
+                                            ) : (
+                                              <div className="w-full h-full flex items-center justify-center bg-blue-50 text-blue-600">
+                                                <MapPin size={32} />
+                                              </div>
+                                            )}
 
-                                    // Bounding box for Static OSM map tile snippet (~1km around coords)
-                                    const lat = loc.lat ?? 0;
-                                    const lng = loc.lng ?? 0;
-                                    const delta = 0.006;
-                                    const bbox = `${lng - delta}%2C${lat - delta / 1.5}%2C${lng + delta}%2C${lat + delta / 1.5}`;
-                                    const staticMapSrc = `https://www.openstreetmap.org/export/embed.html?bbox=${bbox}&layer=mapnik&marker=${lat}%2C${lng}`;
-
-                                    return (
-                                      <div
-                                        onClick={() => window.open(loc.mapUrl, '_blank', 'noopener,noreferrer')}
-                                        role="button"
-                                        tabIndex={0}
-                                        onKeyDown={(e) => {
-                                          if (e.key === 'Enter' || e.key === ' ') {
-                                            e.preventDefault();
-                                            window.open(loc.mapUrl, '_blank', 'noopener,noreferrer');
-                                          }
-                                        }}
-                                        className="w-56 sm:w-64 rounded-md overflow-hidden bg-white text-gray-900 border border-gray-200 shadow-xs cursor-pointer group/map transition-all hover:border-blue-500 hover:ring-2 hover:ring-blue-100 flex flex-col"
-                                        title="Click to open location in Google Maps"
-                                      >
-                                        {/* WhatsApp-style Map Canvas Snippet */}
-                                        <div className="relative w-full h-32 sm:h-36 bg-[#e5e3df] overflow-hidden">
-                                          {loc.lat !== undefined && loc.lng !== undefined ? (
-                                            /* Sized larger with negative bottom margin to cleanly clip out the OSM attribution footer */
-                                            <div className="absolute inset-0 overflow-hidden">
-                                              <iframe
-                                                title="Location Map Snippet"
-                                                src={staticMapSrc}
-                                                className="w-full h-[calc(100%+65px)] -mt-1 -mb-16 border-0 pointer-events-none filter saturate-125 select-none"
-                                                loading="lazy"
-                                              />
+                                            {/* Live Location Pill Badge */}
+                                            <div className="absolute top-2 left-2 px-2 py-0.5 bg-black/75 backdrop-blur-xs text-white rounded-md text-[9px] font-semibold flex items-center gap-1 shadow-xs pointer-events-none">
+                                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                                              <span>Location</span>
                                             </div>
-                                          ) : (
-                                            <div className="w-full h-full flex items-center justify-center bg-blue-50 text-blue-600">
-                                              <MapPin size={32} />
-                                            </div>
-                                          )}
-
-                                          {/* Live Location Pill Badge */}
-                                          <div className="absolute top-2 left-2 px-2 py-0.5 bg-black/75 backdrop-blur-xs text-white rounded-md text-[9px] font-semibold flex items-center gap-1 shadow-xs pointer-events-none">
-                                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                                            <span>Location</span>
-                                          </div>
-                                        </div>
-
-                                        {/* Card Footer with Label, Coordinates & Open Map Link */}
-                                        <div className="p-2.5 bg-gray-50 flex items-center justify-between gap-2 border-t border-gray-100">
-                                          <div className="min-w-0 flex-1">
-                                            <p className="font-semibold truncate text-[12px] text-gray-900 group-hover/map:underline leading-tight">
-                                              {loc.label}
-                                            </p>
-                                            <p className="text-[10px] text-gray-500 truncate mt-0.5">
-                                              {loc.lat !== undefined && loc.lng !== undefined
-                                                ? `${loc.lat.toFixed(5)}, ${loc.lng.toFixed(5)}`
-                                                : 'View on map'}
-                                            </p>
                                           </div>
 
-                                          <span className="flex items-center gap-1 text-[11px] font-semibold text-blue-600 flex-shrink-0 group-hover/map:translate-x-0.5 transition-transform">
-                                            <span>Open</span>
-                                            <ExternalLink size={11} />
-                                          </span>
+                                          {/* Card Footer with Label, Coordinates & Open Map Link */}
+                                          <div className="p-2.5 bg-gray-50 flex items-center justify-between gap-2 border-t border-gray-100">
+                                            <div className="min-w-0 flex-1">
+                                              <p className="font-semibold truncate text-[12px] text-gray-900 group-hover/map:underline leading-tight">
+                                                {loc.label}
+                                              </p>
+                                              <p className="text-[10px] text-gray-500 truncate mt-0.5">
+                                                {loc.lat !== undefined && loc.lng !== undefined
+                                                  ? `${loc.lat.toFixed(5)}, ${loc.lng.toFixed(5)}`
+                                                  : 'View on map'}
+                                              </p>
+                                            </div>
+
+                                            <span className="flex items-center gap-1 text-[11px] font-semibold text-blue-600 flex-shrink-0 group-hover/map:translate-x-0.5 transition-transform">
+                                              <span>Open</span>
+                                              <ExternalLink size={11} />
+                                            </span>
+                                          </div>
                                         </div>
-                                      </div>
-                                    );
-                                  })()
-                                ) : null}
-                              </div>
-                            ) : null}
+                                      );
+                                    })()
+                                  ) : null}
+                                </div>
+                              );
+                            })()}
                           </div>
                         );
                       })()}
@@ -1160,58 +1374,179 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
         ) : (
           <form
             onSubmit={handleSend}
-            className="w-full max-w-3xl flex items-center gap-1.5 sm:gap-2.5 border border-gray-200/90 rounded-xl px-3 sm:px-4 py-1.5 sm:py-2 bg-white shadow-[0_2px_12px_rgba(0,0,0,0.03)] hover:shadow-[0_4px_16px_rgba(0,0,0,0.06)] focus-within:border-indigo-400 focus-within:ring-2 focus-within:ring-indigo-100 transition-all"
+            className="w-full max-w-3xl flex flex-col border border-gray-200/90 rounded-2xl bg-white shadow-[0_2px_12px_rgba(0,0,0,0.03)] hover:shadow-[0_4px_16px_rgba(0,0,0,0.06)] focus-within:border-indigo-400 focus-within:ring-2 focus-within:ring-indigo-100 transition-all overflow-hidden"
           >
-            {/* Attachment Button (Images & PDF only, 48h warning) */}
-            <button
-              type="button"
-              onClick={() => setIsAttachmentModalOpen(true)}
-              className="text-gray-400 hover:text-gray-700 p-1 sm:p-1.5 hover:bg-gray-100 rounded-lg transition-colors flex-shrink-0 cursor-pointer"
-              title="Attach Image or PDF (Auto-deletes in 48h)"
-            >
-              <Paperclip size={16} />
-            </button>
+            {/* Attachment Validation or Upload Error Banner */}
+            {attachmentError && (
+              <div className="flex items-center justify-between gap-2 px-3.5 py-1.5 bg-red-50 border-b border-red-100 text-[11px] text-red-700 animate-in fade-in">
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <AlertCircle size={13} className="text-red-500 flex-shrink-0" />
+                  <span className="truncate">{attachmentError}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setAttachmentError(null)}
+                  className="p-0.5 text-red-400 hover:text-red-700 rounded transition-colors"
+                >
+                  <X size={12} />
+                </button>
+              </div>
+            )}
 
-            {/* Location Share Button */}
-            <button
-              type="button"
-              onClick={() => setIsLocationModalOpen(true)}
-              className="text-gray-400 hover:text-indigo-600 p-1 sm:p-1.5 hover:bg-indigo-50 rounded-lg transition-colors flex-shrink-0 cursor-pointer"
-              title="Share Location"
-            >
-              <MapPin size={16} />
-            </button>
+            {/* Staged Attachments Carousel/Strip - Sticking to the Typing Area */}
+            {stagedFiles.length > 0 && (
+              <div className="px-3 pt-2.5 pb-2 bg-gray-50/90 border-b border-gray-100 flex items-center gap-2 overflow-x-auto select-none">
+                {stagedFiles.map((staged, idx) => (
+                  <div
+                    key={`${staged.file.name}-${idx}`}
+                    className="relative group/staged flex-shrink-0 w-20 h-20 rounded-xl overflow-hidden border border-gray-200 bg-white shadow-2xs flex flex-col"
+                  >
+                    {staged.type === 'pdf' ? (
+                      <div className="flex-1 w-full relative bg-red-50/40 flex flex-col items-center justify-center p-1 overflow-hidden">
+                        {staged.previewUrl ? (
+                          <Image
+                            src={staged.previewUrl}
+                            alt={staged.file.name}
+                            fill
+                            className="object-cover object-top"
+                            unoptimized
+                          />
+                        ) : (
+                          <FileText size={22} className="text-red-500" />
+                        )}
+                        <span className="absolute bottom-1 right-1 text-[8px] font-black uppercase px-1 py-0.2 rounded bg-red-600 text-white shadow-2xs">
+                          PDF
+                        </span>
+                      </div>
+                    ) : (
+                      <div className="flex-1 w-full relative bg-gray-100">
+                        {staged.previewUrl && (
+                          <Image
+                            src={staged.previewUrl}
+                            alt={staged.file.name}
+                            fill
+                            className="object-cover"
+                            unoptimized
+                          />
+                        )}
+                      </div>
+                    )}
 
-            {/* Text Input */}
-            <input
-              type="text"
-              placeholder="Type your message here..."
-              value={inputText}
-              onChange={(e) => setInputText(e.target.value)}
-              onKeyDown={handleKeyDown}
-              className="flex-1 bg-transparent text-xs sm:text-[13px] text-gray-800 placeholder-gray-400 focus:outline-none px-1.5 sm:px-2 min-w-0"
-            />
+                    {/* File caption/name footer */}
+                    <div className="h-4.5 px-1 bg-white/95 border-t border-gray-100 flex items-center justify-between text-[9px] text-gray-700 truncate font-medium">
+                      <span className="truncate">{staged.file.name}</span>
+                    </div>
 
-            {/* Send Button */}
-            <button
-              type="submit"
-              disabled={!inputText.trim() || !!sensitiveCheck.isBlocked}
-              title={
-                sensitiveCheck.isBlocked
-                  ? 'Sharing prohibited sensitive credentials or financial details is not allowed'
-                  : undefined
-              }
-              className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold text-white transition-all shadow-xs flex-shrink-0 ${
-                sensitiveCheck.isBlocked
-                  ? 'bg-red-400 cursor-not-allowed opacity-75'
-                  : inputText.trim()
-                  ? 'bg-[#5b52f9] hover:bg-[#4a41e8] cursor-pointer'
-                  : 'bg-gray-300 text-gray-500 cursor-not-allowed'
-              }`}
-            >
-              <span>Send</span>
-              <SendIcon size={12} />
-            </button>
+                    {/* Remove button */}
+                    <button
+                      type="button"
+                      onClick={() => removeStagedFile(idx)}
+                      disabled={isSendingAttachments}
+                      className="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/75 hover:bg-red-600 text-white flex items-center justify-center transition-all shadow-xs cursor-pointer opacity-90 hover:opacity-100"
+                      title="Remove attachment"
+                    >
+                      <X size={10} />
+                    </button>
+                  </div>
+                ))}
+
+                {/* Add more button if under limit (max 6) */}
+                {stagedFiles.length < 6 && (
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={isSendingAttachments}
+                    className="flex-shrink-0 w-20 h-20 rounded-xl border-2 border-dashed border-gray-300 hover:border-indigo-400 hover:bg-indigo-50/50 flex flex-col items-center justify-center text-gray-400 hover:text-indigo-600 transition-all cursor-pointer group"
+                    title="Add another picture or PDF"
+                  >
+                    <Paperclip size={16} className="group-hover:scale-110 transition-transform" />
+                    <span className="text-[10px] font-semibold mt-1">Add</span>
+                  </button>
+                )}
+
+                <div className="flex-1 min-w-[20px]" />
+
+                {/* Clear all staged files button */}
+                <button
+                  type="button"
+                  onClick={clearStagedFiles}
+                  disabled={isSendingAttachments}
+                  className="flex-shrink-0 text-[10px] text-gray-400 hover:text-red-600 font-medium px-2 py-1 rounded-md hover:bg-red-50 transition-colors cursor-pointer"
+                >
+                  Clear all
+                </button>
+              </div>
+            )}
+
+            {/* Input Row */}
+            <div className="flex items-center gap-1.5 sm:gap-2.5 px-3 sm:px-4 py-1.5 sm:py-2">
+              {/* Attachment Button (Native file picker attaching straight to typing area) */}
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isSendingAttachments}
+                className="text-gray-400 hover:text-gray-700 p-1 sm:p-1.5 hover:bg-gray-100 rounded-lg transition-colors flex-shrink-0 cursor-pointer"
+                title="Attach Images or PDFs"
+              >
+                <Paperclip size={16} />
+              </button>
+
+              {/* Location Share Button */}
+              <button
+                type="button"
+                onClick={() => setIsLocationModalOpen(true)}
+                disabled={isSendingAttachments}
+                className="text-gray-400 hover:text-indigo-600 p-1 sm:p-1.5 hover:bg-indigo-50 rounded-lg transition-colors flex-shrink-0 cursor-pointer"
+                title="Share Location"
+              >
+                <MapPin size={16} />
+              </button>
+
+              {/* Text Input */}
+              <input
+                type="text"
+                placeholder={
+                  stagedFiles.length > 0
+                    ? 'Add a caption for your media...'
+                    : 'Type your message here or drop media...'
+                }
+                value={inputText}
+                onChange={(e) => setInputText(e.target.value)}
+                onKeyDown={handleKeyDown}
+                disabled={isSendingAttachments}
+                className="flex-1 bg-transparent text-xs sm:text-[13px] text-gray-800 placeholder-gray-400 focus:outline-none px-1.5 sm:px-2 min-w-0"
+              />
+
+              {/* Send Button */}
+              <button
+                type="submit"
+                disabled={(!inputText.trim() && stagedFiles.length === 0) || !!sensitiveCheck.isBlocked || isSendingAttachments}
+                title={
+                  sensitiveCheck.isBlocked
+                    ? 'Sharing prohibited sensitive credentials or financial details is not allowed'
+                    : undefined
+                }
+                className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold text-white transition-all shadow-xs flex-shrink-0 ${
+                  sensitiveCheck.isBlocked
+                    ? 'bg-red-400 cursor-not-allowed opacity-75'
+                    : (inputText.trim() || stagedFiles.length > 0) && !isSendingAttachments
+                    ? 'bg-[#5b52f9] hover:bg-[#4a41e8] cursor-pointer'
+                    : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                }`}
+              >
+                {isSendingAttachments ? (
+                  <>
+                    <RefreshCw size={11} className="animate-spin" />
+                    <span>Uploading...</span>
+                  </>
+                ) : (
+                  <>
+                    <span>Send</span>
+                    <SendIcon size={12} />
+                  </>
+                )}
+              </button>
+            </div>
           </form>
         )}
       </div>
@@ -1277,6 +1612,43 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
           <div className="px-3.5 py-1.5 text-[10px] font-bold text-gray-400 uppercase tracking-wider border-b border-gray-100 mb-1">
             Chat Controls
           </div>
+
+          {/* Quick Share Actions (Active Chat Only) */}
+          {!isChatEnded && (
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  setChatAreaContextMenu(null);
+                  fileInputRef.current?.click();
+                }}
+                className="w-full flex items-center gap-2.5 px-3.5 py-2 text-left text-gray-700 hover:bg-indigo-50 hover:text-indigo-700 transition-colors cursor-pointer group"
+              >
+                <Paperclip size={14} className="text-gray-500 group-hover:text-indigo-600" />
+                <div className="flex flex-col">
+                  <span className="font-semibold text-gray-800 group-hover:text-indigo-800">Attach Media</span>
+                  <span className="text-[10px] text-gray-400">Photos, images & PDFs</span>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setChatAreaContextMenu(null);
+                  setIsLocationModalOpen(true);
+                }}
+                className="w-full flex items-center gap-2.5 px-3.5 py-2 text-left text-gray-700 hover:bg-emerald-50 hover:text-emerald-800 transition-colors cursor-pointer group"
+              >
+                <MapPin size={14} className="text-gray-500 group-hover:text-emerald-600" />
+                <div className="flex flex-col">
+                  <span className="font-semibold text-gray-800 group-hover:text-emerald-800">Share Location</span>
+                  <span className="text-[10px] text-gray-400">Pin or current location</span>
+                </div>
+              </button>
+
+              <div className="border-t border-gray-100 my-1" />
+            </>
+          )}
 
           {/* End Chat Session (Client action, or Business if available) */}
           {!isChatEnded && onEndChat && (

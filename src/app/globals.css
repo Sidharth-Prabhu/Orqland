@@ -55,3 +55,18 @@
     radial-gradient(ellipse at 0% 100%, rgba(200, 185, 255, 0.45) 0%, rgba(230, 220, 255, 0.25) 35%, rgba(246, 247, 252, 0) 70%),
     radial-gradient(ellipse at 100% 90%, rgba(220, 210, 255, 0.35) 0%, rgba(246, 247, 252, 0) 60%);
 }
+
+@keyframes orqland-pulse-fast {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.25;
+    transform: scale(0.85);
+  }
+}
+
+.animate-pulse-dot {
+  animation: orqland-pulse-fast 1.2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}

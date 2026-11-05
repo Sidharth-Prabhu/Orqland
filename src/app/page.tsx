@@ -19,6 +19,12 @@ import { Conversation, UserProfile, ChatAttachment, ChatMessage } from '@/types/
 import { MessageSquarePlus } from 'lucide-react';
 import { NotificationItem } from '@/components/chat/MailNotificationMenu';
 import { ToastNotification } from '@/components/chat/ToastNotification';
+import { NotificationPermissionBanner } from '@/components/chat/NotificationPermissionBanner';
+import {
+  requestNotificationPermission,
+  sendBrowserNotification,
+  isPageInBackground,
+} from '@/lib/browserNotifications';
 
 export default function Home() {
   const router = useRouter();
@@ -59,7 +65,19 @@ export default function Home() {
   const MIN_DETAILS_WIDTH = 240;
   const MAX_DETAILS_WIDTH = 500;
 
-  // Transient Animated Toast Notification
+  // Individual message action toast notification for errors/alerts
+  const [actionAlert, setActionAlert] = useState<{
+    id: string;
+    type: 'error' | 'warning' | 'info';
+    message: string;
+  } | null>(null);
+
+  // Auto-dismiss action alert
+  useEffect(() => {
+    if (!actionAlert) return;
+    const t = setTimeout(() => setActionAlert(null), 4000);
+    return () => clearTimeout(t);
+  }, [actionAlert]);
   const [activeToast, setActiveToast] = useState<{
     id: string;
     conversationId: string;
@@ -148,6 +166,20 @@ export default function Home() {
       ? (activeConversation?.clientEmail || conversations[0]?.clientEmail || '')
       : (user?.email || '');
 
+  // Prompt browser notification permission & register service worker upon site entry
+  useEffect(() => {
+    if (typeof window !== 'undefined' && 'Notification' in window) {
+      if (Notification.permission === 'default') {
+        // Automatically request notification permissions so user can get background updates
+        requestNotificationPermission().catch(() => {});
+      } else if (Notification.permission === 'granted') {
+        import('@/lib/browserNotifications').then(({ registerNotificationServiceWorker }) => {
+          registerNotificationServiceWorker().catch(() => {});
+        });
+      }
+    }
+  }, []);
+
   // Redirect unauthenticated users to /login immediately
   useEffect(() => {
     if (!loading && !user) {
@@ -188,6 +220,20 @@ export default function Home() {
               senderName: c.participant.name,
               count: currentCount,
             });
+
+            // Dispatch desktop browser notification if the tab/window is in background or unfocused
+            if (isPageInBackground()) {
+              sendBrowserNotification({
+                title: `${c.participant.name}`,
+                body: c.lastMessage || 'Sent you a new message',
+                icon: c.participant.avatar || '/favicon.ico',
+                tag: `chat-${c.id}`,
+                conversationId: c.id,
+                onClick: () => {
+                  // Only focus the application window, do not force-select/open the chat screen
+                },
+              });
+            }
             break;
           }
         }
@@ -241,9 +287,26 @@ export default function Home() {
 
   // Mark messages as read when active conversation changes
   useEffect(() => {
-    if (activeConversationId && effectiveViewerEmail) {
+    // Only automatically clear unread messages if user actually has window focus and page is visible
+    if (activeConversationId && effectiveViewerEmail && !isPageInBackground()) {
       chatService.markAsRead(activeConversationId, effectiveViewerEmail);
     }
+  }, [activeConversationId, effectiveViewerEmail]);
+
+  // When returning to the tab, mark the active conversation as read
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const handleFocus = () => {
+      if (activeConversationId && effectiveViewerEmail) {
+        chatService.markAsRead(activeConversationId, effectiveViewerEmail);
+      }
+    };
+    window.addEventListener('focus', handleFocus);
+    document.addEventListener('visibilitychange', handleFocus);
+    return () => {
+      window.removeEventListener('focus', handleFocus);
+      document.removeEventListener('visibilitychange', handleFocus);
+    };
   }, [activeConversationId, effectiveViewerEmail]);
 
   // Global Escape key listener: Close active chat conversation and return to Orqland empty state
@@ -466,8 +529,14 @@ export default function Home() {
     );
     try {
       await chatService.deleteMessage(convId, messageId, user.email);
-    } catch (err) {
-      console.error('Delete message error:', err);
+    } catch (err: unknown) {
+      const errorMsg = err instanceof Error ? err.message : 'Failed to delete message.';
+      console.warn('Delete message feedback:', errorMsg);
+      setActionAlert({
+        id: String(Date.now()),
+        type: 'warning',
+        message: errorMsg,
+      });
       if (effectiveViewerEmail) {
         chatService.fetchConversations(effectiveViewerEmail).then(setConversations);
       }
@@ -499,8 +568,14 @@ export default function Home() {
     );
     try {
       await chatService.editMessage(convId, messageId, newContent, user.email);
-    } catch (err) {
-      console.error('Edit message error:', err);
+    } catch (err: unknown) {
+      const errorMsg = err instanceof Error ? err.message : 'Failed to edit message.';
+      console.warn('Edit message feedback:', errorMsg);
+      setActionAlert({
+        id: String(Date.now()),
+        type: 'warning',
+        message: errorMsg,
+      });
       if (effectiveViewerEmail) {
         chatService.fetchConversations(effectiveViewerEmail).then(setConversations);
       }
@@ -605,6 +680,9 @@ export default function Home() {
 
   return (
     <main className="h-screen w-screen overflow-hidden bg-white flex flex-col select-text">
+      {/* Unobtrusive notification permission prompt bar if not yet allowed */}
+      <NotificationPermissionBanner />
+
       {/* Dynamic Top Navigation Bar: Client vs Business (Edge to Edge) */}
       <div className="flex-shrink-0 w-full bg-white">
         {activeViewMode === 'client' ? (
@@ -790,6 +868,27 @@ export default function Home() {
           }}
           onDismiss={() => setActiveToast(null)}
         />
+      )}
+
+      {/* Floating Action Alert / Error Notification Toast */}
+      {actionAlert && (
+        <div className="fixed top-5 left-1/2 -translate-x-1/2 z-50 pointer-events-auto animate-in fade-in slide-in-from-top-3 duration-200">
+          <div className="flex items-center gap-3 px-4 py-3 bg-gray-900/95 text-white backdrop-blur-md rounded-2xl shadow-2xl border border-gray-700/80 max-w-sm sm:max-w-md ring-1 ring-white/10">
+            <div className="w-8 h-8 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center shrink-0">
+              <MessageSquarePlus size={16} />
+            </div>
+            <div className="flex-1 text-xs sm:text-[13px] font-medium leading-snug">
+              {actionAlert.message}
+            </div>
+            <button
+              type="button"
+              onClick={() => setActionAlert(null)}
+              className="p-1 text-gray-400 hover:text-white rounded-lg transition-colors cursor-pointer"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
       )}
 
       {/* Start Chat Modal (Client Initiates) */}

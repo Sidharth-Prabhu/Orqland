@@ -330,6 +330,12 @@ export const DirectMessagesList: React.FC<DirectMessagesListProps> = ({
                     name={conv.participant.name}
                     size={38}
                   />
+                  {conv.participant.isOnline && !isEnded && (
+                    <span
+                      className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-emerald-500 ring-2 ring-white"
+                      title="Online"
+                    />
+                  )}
                 </div>
 
                 {/* Contact Info and Message Preview */}

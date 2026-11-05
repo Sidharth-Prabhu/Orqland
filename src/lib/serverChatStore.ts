@@ -53,6 +53,17 @@ function writeUsers(users: Record<string, StoredUserProfile>) {
   }
 }
 
+// Active online presence tracking in memory (user is active if heartbeat or action within last 45 seconds)
+const userHeartbeatMap = new Map<string, number>();
+const ONLINE_THRESHOLD_MS = 45 * 1000;
+
+function isUserOnline(email?: string | null): boolean {
+  if (!email) return false;
+  const last = userHeartbeatMap.get(email.trim().toLowerCase());
+  if (!last) return false;
+  return Date.now() - last <= ONLINE_THRESHOLD_MS;
+}
+
 // In-memory cache to reduce disk reads
 let cachedConversations: Conversation[] | null = null;
 
@@ -194,7 +205,7 @@ export function formatConversationForViewer(conv: Conversation, viewerEmail: str
         email: conv.clientEmail,
         handle: `@${conv.clientEmail?.split('@')[0] || 'client'}`,
         avatar: effectiveClientAvatar,
-        isOnline: true,
+        isOnline: isUserOnline(conv.clientEmail),
         role: 'client',
       },
     };
@@ -230,7 +241,7 @@ export function formatConversationForViewer(conv: Conversation, viewerEmail: str
         email: conv.businessEmail,
         handle: '@orqland',
         avatar: effectiveBusinessAvatar,
-        isOnline: true,
+        isOnline: isUserOnline(conv.businessEmail),
         role: 'business',
       },
     };
@@ -238,6 +249,14 @@ export function formatConversationForViewer(conv: Conversation, viewerEmail: str
 }
 
 export const serverChatStore = {
+  /**
+   * Record a user heartbeat ping to maintain real-time online presence
+   */
+  recordHeartbeat(email: string) {
+    if (!email) return;
+    userHeartbeatMap.set(email.trim().toLowerCase(), Date.now());
+  },
+
   /**
    * Sync a user profile into the database and update all conversations/messages
    */
@@ -260,6 +279,8 @@ export const serverChatStore = {
       avatar: cleanAvatar || existing?.avatar || '',
       updatedAt: Date.now(),
     };
+
+    userHeartbeatMap.set(normEmail, Date.now());
 
     users[normEmail] = updatedUser;
     writeUsers(users);
@@ -609,6 +630,7 @@ export const serverChatStore = {
 
     // Auto-sync sender avatar if real avatar provided
     const cleanSenderAvatar = sanitizeAvatar(senderAvatar);
+    userHeartbeatMap.set(normSender, Date.now());
     if (cleanSenderAvatar) {
       serverChatStore.syncUserProfile({
         email: normSender,

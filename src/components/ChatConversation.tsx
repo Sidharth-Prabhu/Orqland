@@ -114,7 +114,12 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
   const [isAttachmentModalOpen, setIsAttachmentModalOpen] = useState(false);
   const [isLocationModalOpen, setIsLocationModalOpen] = useState(false);
   const [isActionSubmitting, setIsActionSubmitting] = useState(false);
-  const [previewImage, setPreviewImage] = useState<{ url: string; name: string } | null>(null);
+  const [previewImage, setPreviewImage] = useState<{
+    url: string;
+    name: string;
+    images?: Array<{ url: string; name?: string }>;
+    currentIndex?: number;
+  } | null>(null);
   const [previewPdf, setPreviewPdf] = useState<{ url: string; name: string; size?: number } | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [isSafetyNoticeDismissed, setIsSafetyNoticeDismissed] = useState(true);
@@ -677,6 +682,12 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
               name={conversation.participant.name}
               size={36}
             />
+            {conversation.participant.isOnline && !isChatEnded && (
+              <span
+                className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-emerald-500 ring-2 ring-white"
+                title="Online now"
+              />
+            )}
           </div>
 
           <div className="min-w-0">
@@ -688,9 +699,15 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
                 <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-red-100 text-red-700 flex-shrink-0">
                   Ended
                 </span>
+              ) : conversation.participant.isOnline ? (
+                <span className="inline-flex items-center gap-1 text-[9px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200/60 flex-shrink-0">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                  <span>Active</span>
+                </span>
               ) : (
-                <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200/60 flex-shrink-0">
-                  Active
+                <span className="inline-flex items-center gap-1 text-[9px] font-semibold px-2 py-0.5 rounded-full bg-gray-100 text-gray-500 border border-gray-200/60 flex-shrink-0">
+                  <span className="w-1.5 h-1.5 rounded-full bg-gray-400" />
+                  <span>Offline</span>
                 </span>
               )}
             </div>
@@ -744,7 +761,20 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
             </button>
           )}
 
-          {/* Options Dropdown: Chat controls (Close Chat, Clear Chat) */}
+          {/* End Chat Icon Button in Top Bar (Available when chat is active and onEndChat is provided) */}
+          {onEndChat && !isChatEnded && !isBusiness && (
+            <button
+              type="button"
+              onClick={() => setIsEndModalOpen(true)}
+              className="p-1.5 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-xl transition-colors cursor-pointer group"
+              title="End chat session"
+              aria-label="End Chat"
+            >
+              <Ban size={17} className="group-hover:scale-105 transition-transform" />
+            </button>
+          )}
+
+          {/* Options Dropdown: Chat controls (Close Chat, End Chat, Clear Chat) */}
           <div className="relative" ref={optionsDropdownRef}>
             <button
               onClick={() => setShowOptionsDropdown(!showOptionsDropdown)}
@@ -756,7 +786,7 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
 
             {showOptionsDropdown && (
               <div className="absolute right-0 mt-2 w-52 bg-white rounded-2xl shadow-xl border border-gray-100 p-1.5 z-40 animate-in fade-in zoom-in-95 duration-100 space-y-0.5">
-                {/* Close Chat (Deselcts conversation and returns to blank slate) */}
+                {/* Close Chat (Deselects conversation and returns to blank slate) */}
                 {onBackToList && (
                   <button
                     type="button"
@@ -771,6 +801,26 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
                       <div className="font-semibold text-gray-800">Close Chat</div>
                       <div className="text-[10px] text-gray-400 font-normal mt-0.5">
                         Exit to home screen
+                      </div>
+                    </div>
+                  </button>
+                )}
+
+                {/* End Chat option in Dropdown */}
+                {onEndChat && !isChatEnded && !isBusiness && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowOptionsDropdown(false);
+                      setIsEndModalOpen(true);
+                    }}
+                    className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-semibold text-red-600 hover:bg-red-50 hover:text-red-700 rounded-xl transition-colors cursor-pointer"
+                  >
+                    <Ban size={15} className="text-red-600 flex-shrink-0" />
+                    <div className="text-left leading-tight">
+                      <div className="font-semibold text-red-600">End Chat</div>
+                      <div className="text-[10px] text-red-400 font-normal mt-0.5">
+                        Close communication channel
                       </div>
                     </div>
                   </button>
@@ -1081,12 +1131,21 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
                                         ) : (att.url || att.thumbnailUrl) ? (
                                           <div
                                             key={att.id || idx}
-                                            onClick={() =>
+                                            onClick={() => {
+                                              const allAttachments = msg.attachments || [];
+                                              const imageItems = allAttachments
+                                                .filter((a) => a.type === 'image' && (a.url || a.thumbnailUrl))
+                                                .map((a) => ({ url: a.url || a.thumbnailUrl || '', name: a.name }));
+                                              const currentIdx = imageItems.findIndex(
+                                                (item) => item.url === (att.url || att.thumbnailUrl)
+                                              );
                                               setPreviewImage({
                                                 url: att.url || att.thumbnailUrl || '',
                                                 name: att.name,
-                                              })
-                                            }
+                                                images: imageItems,
+                                                currentIndex: currentIdx >= 0 ? currentIdx : 0,
+                                              });
+                                            }}
                                             className={`relative w-full ${itemHeightClass} rounded-lg overflow-hidden bg-gray-100 border border-black/10 shadow-[0_1px_2px_rgba(0,0,0,0.06)] cursor-pointer group/item hover:border-black/25 transition-all`}
                                             title="Click to view image"
                                           >
@@ -1393,6 +1452,20 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
               </div>
             )}
 
+            {/* 48-Hour Media Retention Notification Banner (Visible whenever media is attached) */}
+            {stagedFiles.length > 0 && (
+              <div className="flex items-center justify-between gap-2 px-3.5 py-2 bg-gradient-to-r from-blue-50/90 via-indigo-50/90 to-purple-50/90 border-b border-indigo-100/80 text-[11px] text-indigo-900 animate-in fade-in slide-in-from-top-1 duration-200">
+                <div className="flex items-center gap-2 min-w-0">
+                  <div className="w-5 h-5 rounded-full bg-indigo-500/15 flex items-center justify-center shrink-0">
+                    <Clock size={12} className="text-indigo-600" />
+                  </div>
+                  <span className="leading-tight font-medium">
+                    Note: Shared media is securely stored for 48 hours and automatically deleted afterward.
+                  </span>
+                </div>
+              </div>
+            )}
+
             {/* Staged Attachments Carousel/Strip - Sticking to the Typing Area */}
             {stagedFiles.length > 0 && (
               <div className="px-3 pt-2.5 pb-2 bg-gray-50/90 border-b border-gray-100 flex items-center gap-2 overflow-x-auto select-none">
@@ -1432,10 +1505,12 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
                       </div>
                     )}
 
-                    {/* File caption/name footer */}
-                    <div className="h-4.5 px-1 bg-white/95 border-t border-gray-100 flex items-center justify-between text-[9px] text-gray-700 truncate font-medium">
-                      <span className="truncate">{staged.file.name}</span>
-                    </div>
+                    {/* File caption/name footer - only shown for PDF documents, omitted for images */}
+                    {staged.type === 'pdf' && (
+                      <div className="h-4.5 px-1 bg-white/95 border-t border-gray-100 flex items-center justify-between text-[9px] text-gray-700 truncate font-medium">
+                        <span className="truncate">{staged.file.name}</span>
+                      </div>
+                    )}
 
                     {/* Remove button */}
                     <button
@@ -1580,13 +1655,26 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
         onSendLocation={handleSendLocation}
       />
 
-      {/* Lightbox Modal for Bigger Image View */}
+      {/* Lightbox Modal for Bigger Image View with Gallery navigation */}
       {previewImage && (
         <ImageViewerModal
           isOpen={!!previewImage}
           onClose={() => setPreviewImage(null)}
           imageUrl={previewImage.url}
           imageName={previewImage.name}
+          images={previewImage.images}
+          currentIndex={previewImage.currentIndex}
+          onIndexChange={(newIndex) => {
+            if (previewImage.images && previewImage.images[newIndex]) {
+              const target = previewImage.images[newIndex];
+              setPreviewImage({
+                ...previewImage,
+                url: target.url,
+                name: target.name || 'Image',
+                currentIndex: newIndex,
+              });
+            }
+          }}
         />
       )}
 

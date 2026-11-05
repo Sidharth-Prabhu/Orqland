@@ -170,6 +170,20 @@ export const chatService = {
   },
 
   /**
+   * Send heartbeat to maintain online presence
+   */
+  async sendHeartbeat(email: string) {
+    if (!email) return;
+    try {
+      await fetch('/api/user/heartbeat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      });
+    } catch {}
+  },
+
+  /**
    * Get cached conversations immediately (0ms)
    */
   getCachedConversations(): Conversation[] {
@@ -548,7 +562,15 @@ export const chatService = {
     }
 
     // 4. Background polling loop (every 1s) to guarantee fast cross-device & cross-browser synchronization
+    // Also dispatch heartbeat ping periodically every 20s
+    let heartbeatTick = 0;
+    chatService.sendHeartbeat(email);
+
     const interval = setInterval(() => {
+      heartbeatTick++;
+      if (heartbeatTick % 20 === 0) {
+        chatService.sendHeartbeat(email);
+      }
       chatService.fetchConversations(email).then((fresh) => {
         onUpdate(fresh);
       });

@@ -11,6 +11,9 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ conversations: [] });
     }
 
+    // Automatically record user activity heartbeat on every list request / poll
+    serverChatStore.recordHeartbeat(email);
+
     // Rate limiting to protect against excessive polling / scraping
     const rateCheck = checkGeneralRateLimit(email);
     if (!rateCheck.allowed) {

@@ -285,20 +285,26 @@ export default function Home() {
     setActiveToast(null);
   };
 
-  // Mark messages as read when active conversation changes
+  // Mark messages as read and send heartbeat when active conversation changes
   useEffect(() => {
-    // Only automatically clear unread messages if user actually has window focus and page is visible
-    if (activeConversationId && effectiveViewerEmail && !isPageInBackground()) {
-      chatService.markAsRead(activeConversationId, effectiveViewerEmail);
+    if (activeConversationId && effectiveViewerEmail) {
+      // Immediately send heartbeat so the other participant sees "Active" instantly
+      chatService.sendHeartbeat(effectiveViewerEmail);
+      if (!isPageInBackground()) {
+        chatService.markAsRead(activeConversationId, effectiveViewerEmail);
+      }
     }
   }, [activeConversationId, effectiveViewerEmail]);
 
-  // When returning to the tab, mark the active conversation as read
+  // When returning to the tab or focusing, update heartbeat and mark active conversation as read
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const handleFocus = () => {
-      if (activeConversationId && effectiveViewerEmail) {
-        chatService.markAsRead(activeConversationId, effectiveViewerEmail);
+      if (effectiveViewerEmail) {
+        chatService.sendHeartbeat(effectiveViewerEmail);
+        if (activeConversationId) {
+          chatService.markAsRead(activeConversationId, effectiveViewerEmail);
+        }
       }
     };
     window.addEventListener('focus', handleFocus);
@@ -314,11 +320,12 @@ export default function Home() {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
 
-      // Don't close chat if a modal dialog is currently open
+      // Don't close chat if any modal dialog or media viewer is currently open in the DOM
       if (
         isStartChatModalOpen ||
         isEndModalOpen ||
-        isDeleteModalOpen
+        isDeleteModalOpen ||
+        document.querySelector('[role="dialog"]') !== null
       ) {
         return;
       }

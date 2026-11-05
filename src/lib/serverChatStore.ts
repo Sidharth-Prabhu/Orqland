@@ -199,8 +199,28 @@ export function formatConversationForViewer(conv: Conversation, viewerEmail: str
       },
     };
   } else {
+    const clientDeletedAt = conv.clientDeletedAt || 0;
+    const baseMessages = clientDeletedAt > 0
+      ? conv.messages.filter((m) => (m.createdAt || 0) > clientDeletedAt)
+      : conv.messages;
+    const visibleMessages = baseMessages.filter((m) => !m.deletedByClient);
+
+    const lastMsg = visibleMessages.length > 0
+      ? (visibleMessages[visibleMessages.length - 1].content ||
+          (visibleMessages[visibleMessages.length - 1].attachment
+            ? `[${visibleMessages[visibleMessages.length - 1].attachment?.type.toUpperCase()}]`
+            : ''))
+      : (clientDeletedAt > 0 ? 'Conversation history cleared on your side' : conv.lastMessage);
+
+    const lastMsgTime = visibleMessages.length > 0
+      ? visibleMessages[visibleMessages.length - 1].timestamp
+      : conv.lastMessageTime;
+
     return {
       ...conv,
+      messages: visibleMessages,
+      lastMessage: lastMsg,
+      lastMessageTime: lastMsgTime,
       businessName: effectiveBusinessName,
       businessAvatar: effectiveBusinessAvatar,
       unreadCount: conv.unreadByClient || 0,
@@ -425,8 +445,8 @@ export const serverChatStore = {
     if (existingIndex >= 0) {
       const existing = all[existingIndex];
 
-      // If already ended, do NOT create a new session or auto-send new messages!
-      // Simply unhide for client if hidden, update business details if changed, and return the ended conversation
+      // If already ended, do NOT update category yet (only update if user confirms reopen),
+      // unhide for client if hidden, update business details if changed, and return the conversation
       if (existing.status === 'ended') {
         const updatedEnded: Conversation = {
           ...existing,
@@ -441,7 +461,7 @@ export const serverChatStore = {
         return formatConversationForViewer(updatedEnded, activeViewerEmail);
       }
 
-      // If active session exists, append initial message if provided and update last message
+      // If active session exists, update category if provided, append initial message if provided and update last message
       const updatedMessages = [...existing.messages];
       if (initialMessage && initialMessage.trim()) {
         updatedMessages.push({
@@ -465,6 +485,10 @@ export const serverChatStore = {
         clientAvatar: effectiveClientAvatar || existing.clientAvatar,
         businessName: effectiveBusinessName || existing.businessName,
         businessAvatar: effectiveBusinessAvatar || existing.businessAvatar,
+        workspaceInfo: {
+          ...existing.workspaceInfo,
+          name: workspaceName || existing.workspaceInfo?.name || 'General Consultation',
+        },
         deletedByBusiness: false,
         deletedForClient: false,
         unreadByBusiness: initialMessage?.trim()
@@ -668,10 +692,6 @@ export const serverChatStore = {
   },
 
   deleteChat(conversationId: string, userEmail: string): Conversation {
-    if (!isBusinessUser(userEmail)) {
-      throw new Error('Permission Denied: Only the Business can delete a chat from their perspective.');
-    }
-
     const all = readAll();
     const index = all.findIndex((c) => c.id === conversationId);
 
@@ -679,11 +699,25 @@ export const serverChatStore = {
       throw new Error('Conversation not found.');
     }
 
-    const updated: Conversation = {
-      ...all[index],
-      deletedByBusiness: false,
-      businessDeletedAt: Date.now(),
-    };
+    const normUser = userEmail.trim().toLowerCase();
+    const existing = all[index];
+    const isBusiness =
+      isBusinessUser(normUser) ||
+      normUser === (existing.businessEmail || '').toLowerCase();
+
+    const clearTime = Date.now();
+
+    // Clear chat history for the respective party (business or client)
+    const updated: Conversation = isBusiness
+      ? {
+          ...existing,
+          deletedByBusiness: false,
+          businessDeletedAt: clearTime,
+        }
+      : {
+          ...existing,
+          clientDeletedAt: clearTime,
+        };
 
     all[index] = updated;
     writeAll(all);
@@ -697,10 +731,6 @@ export const serverChatStore = {
     userEmail: string;
   }): Conversation {
     const { conversationId, messageId, userEmail } = params;
-    if (!isBusinessUser(userEmail)) {
-      throw new Error('Permission Denied: Only the Business account can delete messages from their view.');
-    }
-
     const all = readAll();
     const index = all.findIndex((c) => c.id === conversationId);
 
@@ -709,9 +739,120 @@ export const serverChatStore = {
     }
 
     const conv = all[index];
-    conv.messages = conv.messages.map((m) =>
-      m.id === messageId ? { ...m, deletedByBusiness: true } : m
-    );
+    const normUser = userEmail.trim().toLowerCase();
+    const targetMsg = conv.messages.find((m) => m.id === messageId);
+
+    if (!targetMsg) {
+      throw new Error('Message not found.');
+    }
+
+    // Verify 15-minute deletion window
+    const now = Date.now();
+    const messageCreatedAt = targetMsg.createdAt || 0;
+    const FIFTEEN_MINUTES_MS = 15 * 60 * 1000;
+
+    if (messageCreatedAt > 0 && now - messageCreatedAt > FIFTEEN_MINUTES_MS) {
+      throw new Error('Delete expired: Messages can only be deleted within 15 minutes of being sent.');
+    }
+
+    // Verify ownership: users can only delete messages which they sent
+    const targetSender = (targetMsg.senderEmail || '').trim().toLowerCase();
+    const isOwner =
+      targetSender === normUser ||
+      (isBusinessUser(normUser) && isBusinessUser(targetSender)) ||
+      (!isBusinessUser(normUser) && !isBusinessUser(targetSender));
+
+    if (!isOwner) {
+      throw new Error('Unauthorized: You can only delete messages that you sent.');
+    }
+
+    // Remove the message from the conversation (real-time delete for everyone)
+    conv.messages = conv.messages.filter((m) => m.id !== messageId);
+
+    // Update lastMessage and lastMessageTime if the deleted message was the last message
+    const remainingMessages = conv.messages;
+    if (remainingMessages.length > 0) {
+      const lastMsg = remainingMessages[remainingMessages.length - 1];
+      conv.lastMessage =
+        lastMsg.content ||
+        (lastMsg.attachment ? `[${lastMsg.attachment.type.toUpperCase()}]` : '');
+      conv.lastMessageTime = lastMsg.timestamp;
+      conv.lastMessageTimestamp = lastMsg.createdAt || Date.now();
+    } else {
+      conv.lastMessage = '';
+      conv.lastMessageTime = '';
+    }
+
+    all[index] = conv;
+    writeAll(all);
+
+    return formatConversationForViewer(conv, userEmail);
+  },
+
+  editMessage(params: {
+    conversationId: string;
+    messageId: string;
+    newContent: string;
+    userEmail: string;
+  }): Conversation {
+    const { conversationId, messageId, newContent, userEmail } = params;
+    const all = readAll();
+    const index = all.findIndex((c) => c.id === conversationId);
+
+    if (index === -1) {
+      throw new Error('Conversation not found.');
+    }
+
+    const conv = all[index];
+    const normUser = userEmail.trim().toLowerCase();
+    const targetMsg = conv.messages.find((m) => m.id === messageId);
+
+    if (!targetMsg) {
+      throw new Error('Message not found.');
+    }
+
+    // Verify 10-minute edit window
+    const now = Date.now();
+    const messageCreatedAt = targetMsg.createdAt || 0;
+    const TEN_MINUTES_MS = 10 * 60 * 1000;
+
+    if (messageCreatedAt > 0 && now - messageCreatedAt > TEN_MINUTES_MS) {
+      throw new Error('Edit expired: Messages can only be edited within 10 minutes of being sent.');
+    }
+
+    // Verify ownership (only the sender can edit their message)
+    const targetSender = (targetMsg.senderEmail || '').trim().toLowerCase();
+    const isOwner =
+      targetSender === normUser ||
+      (isBusinessUser(normUser) && isBusinessUser(targetSender)) ||
+      (!isBusinessUser(normUser) && !isBusinessUser(targetSender));
+
+    if (!isOwner) {
+      throw new Error('Unauthorized: You can only edit your own messages.');
+    }
+
+    const trimmedContent = newContent.trim();
+    if (!trimmedContent && !targetMsg.attachment && (!targetMsg.attachments || targetMsg.attachments.length === 0)) {
+      throw new Error('Message content cannot be empty.');
+    }
+
+    conv.messages = conv.messages.map((m) => {
+      if (m.id === messageId) {
+        return {
+          ...m,
+          content: trimmedContent,
+          isEdited: true,
+          editedAt: now,
+        };
+      }
+      return m;
+    });
+
+    // If this was the last message, also update lastMessage in the conversation summary
+    const lastVisibleMsg = conv.messages[conv.messages.length - 1];
+    if (lastVisibleMsg && lastVisibleMsg.id === messageId) {
+      conv.lastMessage = trimmedContent || conv.lastMessage;
+    }
 
     all[index] = conv;
     writeAll(all);
@@ -757,7 +898,7 @@ export const serverChatStore = {
     return formatConversationForViewer(updated, userEmail);
   },
 
-  reopenChat(conversationId: string, userEmail: string): Conversation {
+  reopenChat(conversationId: string, userEmail: string, newWorkspaceName?: string): Conversation {
     const all = readAll();
     const index = all.findIndex((c) => c.id === conversationId);
 
@@ -780,6 +921,10 @@ export const serverChatStore = {
       status: 'active',
       endedAt: undefined,
       endedBy: undefined,
+      workspaceInfo: {
+        ...conv.workspaceInfo,
+        name: newWorkspaceName?.trim() || conv.workspaceInfo?.name || 'General Consultation',
+      },
       lastMessage: 'Chat session re-opened by client',
       lastMessageTime: new Date(now).toLocaleTimeString([], {
         hour: '2-digit',

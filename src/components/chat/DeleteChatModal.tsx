@@ -40,7 +40,7 @@ export const DeleteChatModal: React.FC<DeleteChatModalProps> = ({
           </div>
           <div>
             <h3 className="text-base font-bold text-gray-900">
-              Delete Chat History?
+              Clear Chat History?
             </h3>
             <span className="text-[11px] font-semibold text-amber-800 bg-amber-100/70 px-2.5 py-0.5 rounded-full inline-block mt-0.5">
               Affects Your Side Only
@@ -50,11 +50,11 @@ export const DeleteChatModal: React.FC<DeleteChatModalProps> = ({
 
         <div className="space-y-3 mb-6 text-xs text-gray-600 leading-relaxed bg-amber-50/50 p-4 rounded-2xl border border-amber-200/60">
           <p className="font-bold text-amber-950">
-            Please note how deleting chat history works with {clientName}:
+            Please note how clearing chat history works with {clientName}:
           </p>
           <ul className="space-y-2 list-disc list-inside text-gray-700">
             <li>
-              <strong className="text-gray-900">Deletes the conversation history</strong> from your side only.
+              <strong className="text-gray-900">Clears the conversation history</strong> from your side only.
             </li>
             <li>
               The conversation and all existing messages <strong className="text-gray-900">remain visible to {clientName}</strong>.
@@ -84,7 +84,7 @@ export const DeleteChatModal: React.FC<DeleteChatModalProps> = ({
             className="flex items-center gap-2 px-5 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold shadow-sm transition-all cursor-pointer disabled:opacity-50"
           >
             <Trash2 size={14} />
-            <span>{isSubmitting ? 'Deleting...' : 'Delete for Me'}</span>
+            <span>{isSubmitting ? 'Clearing...' : 'Clear for Me'}</span>
           </button>
         </div>
       </div>

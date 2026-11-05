@@ -23,6 +23,8 @@ import {
   ChevronLeft,
   PanelRight,
   X,
+  Pencil,
+  Copy,
 } from 'lucide-react';
 import { Conversation, ChatMessage, ChatAttachment } from '@/types/chat';
 import { isBusinessUser, detectSensitiveContent } from '@/lib/security';
@@ -48,6 +50,7 @@ interface ChatConversationProps {
   onReopenChat?: (conversationId: string) => Promise<void>;
   onRetryMessage?: (message: ChatMessage) => void;
   onDeleteMessage?: (messageId: string) => Promise<void>;
+  onEditMessage?: (messageId: string, newContent: string) => Promise<void>;
   onBackToList?: () => void;
   onToggleDetails?: () => void;
   isDetailsOpen?: boolean;
@@ -81,6 +84,11 @@ function parseLocationAttachment(attachment?: ChatAttachment) {
   return { label, lat, lng, mapUrl };
 }
 
+const getTodayDateKey = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
 export const ChatConversation: React.FC<ChatConversationProps> = ({
   conversation,
   currentUserEmail,
@@ -90,6 +98,7 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
   onReopenChat,
   onRetryMessage,
   onDeleteMessage,
+  onEditMessage,
   onBackToList,
   onToggleDetails,
   isDetailsOpen = false,
@@ -105,7 +114,150 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
   const [previewImage, setPreviewImage] = useState<{ url: string; name: string } | null>(null);
   const [previewPdf, setPreviewPdf] = useState<{ url: string; name: string; size?: number } | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [isSafetyNoticeDismissed, setIsSafetyNoticeDismissed] = useState(false);
+  const [isSafetyNoticeDismissed, setIsSafetyNoticeDismissed] = useState(true);
+  const [currentTime, setCurrentTime] = useState<number>(Date.now());
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+  const [editingText, setEditingText] = useState<string>('');
+  const [isSavingEdit, setIsSavingEdit] = useState<boolean>(false);
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+    message: ChatMessage;
+    canEdit: boolean;
+    canDelete: boolean;
+  } | null>(null);
+  const [chatAreaContextMenu, setChatAreaContextMenu] = useState<{
+    x: number;
+    y: number;
+  } | null>(null);
+
+  // Close context menus on outside click, window scroll or Escape
+  useEffect(() => {
+    const handleClose = () => {
+      setContextMenu(null);
+      setChatAreaContextMenu(null);
+    };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setContextMenu(null);
+        setChatAreaContextMenu(null);
+      }
+    };
+    window.addEventListener('click', handleClose);
+    window.addEventListener('scroll', handleClose, true);
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('click', handleClose);
+      window.removeEventListener('scroll', handleClose, true);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, []);
+
+  const handleChatAreaContextMenu = (e: React.MouseEvent) => {
+    // Only trigger when right-clicking on empty background or non-interactive parts of the chat area
+    // (Individual message right-click handles its own context menu)
+    const target = e.target as HTMLElement;
+    if (
+      target.closest('button') ||
+      target.closest('input') ||
+      target.closest('textarea') ||
+      target.closest('[data-message-item]')
+    ) {
+      return;
+    }
+
+    e.preventDefault();
+    setContextMenu(null);
+
+    const menuWidth = 200;
+    const menuHeight = 220;
+    const x = Math.min(e.clientX, window.innerWidth - menuWidth - 10);
+    const y = Math.min(e.clientY, window.innerHeight - menuHeight - 10);
+
+    setChatAreaContextMenu({
+      x: Math.max(10, x),
+      y: Math.max(10, y),
+    });
+  };
+
+  const handleMessageContextMenu = (e: React.MouseEvent, msg: ChatMessage) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    const isSender = msg.senderEmail?.toLowerCase() === currentUserEmail.toLowerCase();
+    const TEN_MINUTES_MS = 10 * 60 * 1000;
+    const msgTime = msg.createdAt || 0;
+    const isWithin10Mins = msgTime > 0 ? (currentTime - msgTime) <= TEN_MINUTES_MS : true;
+    const FIFTEEN_MINUTES_MS = 15 * 60 * 1000;
+    const isWithin15Mins = msgTime > 0 ? (currentTime - msgTime) <= FIFTEEN_MINUTES_MS : true;
+
+    const canEdit = isSender && isWithin10Mins && Boolean(onEditMessage) && !isChatEnded;
+    const canDelete = isSender && isWithin15Mins && Boolean(onDeleteMessage) && !isChatEnded;
+
+    // Constrain position within viewport
+    const menuWidth = 180;
+    const menuHeight = 120;
+    const x = Math.min(e.clientX, window.innerWidth - menuWidth - 10);
+    const y = Math.min(e.clientY, window.innerHeight - menuHeight - 10);
+
+    setContextMenu({
+      x: Math.max(10, x),
+      y: Math.max(10, y),
+      message: msg,
+      canEdit,
+      canDelete,
+    });
+  };
+
+  const handleSaveEdit = async (messageId: string) => {
+    if (!onEditMessage || !editingText.trim()) return;
+    try {
+      setIsSavingEdit(true);
+      await onEditMessage(messageId, editingText.trim());
+      setEditingMessageId(null);
+    } catch (err) {
+      console.error('Failed to edit message:', err);
+    } finally {
+      setIsSavingEdit(false);
+    }
+  };
+
+  // Safety notice should only appear once per day per user
+  useEffect(() => {
+    try {
+      const userKey = currentUserEmail ? currentUserEmail.trim().toLowerCase() : 'user';
+      const storageKey = `orqland_safety_notice_date_${userKey}`;
+      const today = getTodayDateKey();
+      const lastShownDate = localStorage.getItem(storageKey);
+
+      if (lastShownDate === today) {
+        setIsSafetyNoticeDismissed(true);
+      } else {
+        // First time viewing a chat today: show the notice and save today's date
+        setIsSafetyNoticeDismissed(false);
+        localStorage.setItem(storageKey, today);
+      }
+    } catch {
+      setIsSafetyNoticeDismissed(false);
+    }
+  }, [currentUserEmail]);
+
+  const handleDismissSafetyNotice = () => {
+    setIsSafetyNoticeDismissed(true);
+    try {
+      const userKey = currentUserEmail ? currentUserEmail.trim().toLowerCase() : 'user';
+      const storageKey = `orqland_safety_notice_date_${userKey}`;
+      localStorage.setItem(storageKey, getTodayDateKey());
+    } catch {}
+  };
+
+  // Periodically refresh current time to update 15-minute deletion window
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrentTime(Date.now());
+    }, 15000);
+    return () => clearInterval(timer);
+  }, []);
 
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -141,12 +293,21 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
       // Switched to a new conversation: jump directly to bottom
       isNearBottomRef.current = true;
       scrollToBottom('auto');
+
+      // Ensure safety notice does not re-appear if already shown or dismissed today
+      try {
+        const userKey = currentUserEmail ? currentUserEmail.trim().toLowerCase() : 'user';
+        const storageKey = `orqland_safety_notice_date_${userKey}`;
+        if (localStorage.getItem(storageKey) === getTodayDateKey()) {
+          setIsSafetyNoticeDismissed(true);
+        }
+      } catch {}
     } else if (newMessagesAdded && isNearBottomRef.current) {
       // Only auto-scroll on new messages if user was already at or near bottom
       scrollToBottom('smooth');
     }
     // If the message count hasn't grown (e.g. background polling refresh), NEVER auto-scroll!
-  }, [conversation.id, conversation.messages]);
+  }, [conversation.id, conversation.messages, currentUserEmail]);
 
   // Close options dropdown on outside click
   useEffect(() => {
@@ -280,7 +441,7 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
           </div>
           <button
             type="button"
-            onClick={() => setIsSafetyNoticeDismissed(true)}
+            onClick={handleDismissSafetyNotice}
             className="p-1 -mr-1 text-amber-700/70 hover:text-amber-900 hover:bg-amber-100/80 rounded-md transition-colors cursor-pointer flex-shrink-0"
             title="Dismiss notice"
             aria-label="Dismiss notice"
@@ -291,7 +452,7 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
       )}
 
       {/* Top Header Bar */}
-      <div className="h-[64px] sm:h-[70px] border-b border-gray-200 px-3 sm:px-5 flex items-center justify-between flex-shrink-0 bg-white">
+      <div className="h-[64px] sm:h-[70px] border-b border-gray-100/90 px-4 sm:px-6 flex items-center justify-between flex-shrink-0 bg-white">
         <div className="flex items-center gap-2 sm:gap-3.5 min-w-0">
           {/* Mobile Back Button: return to DM list on mobile/narrow screens */}
           {onBackToList && (
@@ -311,27 +472,27 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
             <UserAvatar
               src={conversation.participant.avatar}
               name={conversation.participant.name}
-              size={38}
+              size={36}
             />
           </div>
 
           <div className="min-w-0">
             <div className="flex items-center gap-1.5 sm:gap-2">
-              <span className="text-[14px] sm:text-[15px] font-bold text-gray-900 leading-tight truncate">
+              <span className="text-[13px] sm:text-[14px] font-bold text-gray-900 leading-tight truncate">
                 {conversation.participant.name}
               </span>
               {isChatEnded ? (
-                <span className="text-[9px] sm:text-[10px] font-bold px-1.5 sm:px-2 py-0.5 rounded-full bg-red-100 text-red-700 flex-shrink-0">
+                <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-red-100 text-red-700 flex-shrink-0">
                   Ended
                 </span>
               ) : (
-                <span className="text-[9px] sm:text-[10px] font-bold px-1.5 sm:px-2 py-0.5 rounded-full bg-green-100 text-green-700 flex-shrink-0">
+                <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200/60 flex-shrink-0">
                   Active
                 </span>
               )}
             </div>
-            <div className="text-[11px] sm:text-[12px] font-medium text-gray-400 mt-0.5 truncate">
-              {conversation.workspaceInfo?.name || 'Workspace'}
+            <div className="text-[10px] sm:text-[11px] font-medium text-gray-400 mt-0.5 truncate">
+              {conversation.workspaceInfo?.name || 'Technical Architecture'}
             </div>
           </div>
         </div>
@@ -341,7 +502,7 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
           {/* Concise Search Bar */}
           <div className="relative flex items-center">
             <Search
-              size={14}
+              size={13}
               className="absolute left-2.5 text-gray-400 pointer-events-none"
             />
             <input
@@ -349,7 +510,7 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search chat..."
-              className="w-28 sm:w-44 md:w-52 pl-7 pr-6 py-1.5 bg-gray-50 hover:bg-gray-100/80 focus:bg-white border border-gray-200/90 rounded-xl text-xs text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-400 transition-all shadow-2xs"
+              className="w-28 sm:w-44 md:w-48 pl-7 pr-6 py-1.5 bg-[#f0f1f5]/80 hover:bg-[#eaecee] focus:bg-white border border-gray-200/60 focus:border-indigo-400 rounded-lg text-xs text-gray-900 placeholder:text-gray-400 focus:outline-none transition-all shadow-2xs"
             />
             {searchQuery && (
               <button
@@ -363,69 +524,49 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
             )}
           </div>
 
-          {/* Client Session Control: End Chat Button */}
-          {!isBusiness && !isChatEnded && onEndChat && (
-            <button
-              type="button"
-              onClick={() => setIsEndModalOpen(true)}
-              className="flex items-center gap-1 sm:gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-bold text-red-600 bg-red-50 hover:bg-red-100 border border-red-200 transition-all cursor-pointer shadow-xs hover:shadow-sm"
-              title="Permanently End Chat Session"
-            >
-              <Ban size={13} className="text-red-500" />
-              <span className="hidden sm:inline">End Chat</span>
-            </button>
-          )}
-
-          {isChatEnded && (
-            <div className="flex items-center gap-1 sm:gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-bold text-red-700 bg-red-100/80 border border-red-200">
-              <Lock size={12} />
-              <span className="hidden sm:inline">Ended</span>
-            </div>
-          )}
-
           {/* Details Sidebar Toggle Button */}
           {onToggleDetails && (
             <button
               type="button"
               onClick={onToggleDetails}
-              className={`p-2 rounded-xl transition-all cursor-pointer ${
+              className={`p-1.5 rounded-xl transition-all cursor-pointer ${
                 isDetailsOpen
                   ? 'bg-blue-50 text-blue-600 ring-1 ring-blue-200'
-                  : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                  : 'text-gray-500 hover:text-gray-900 hover:bg-gray-100'
               }`}
               title={isDetailsOpen ? 'Hide conversation details' : 'Show conversation details'}
               aria-label="Toggle Details"
             >
-              <PanelRight size={18} />
+              <PanelRight size={17} />
             </button>
           )}
 
-          {/* Options Dropdown: Business controls */}
-          {isBusiness && (
+          {/* Options Dropdown: Clear Chat controls (Business & Client) */}
+          {onDeleteChat && (
             <div className="relative" ref={optionsDropdownRef}>
               <button
                 onClick={() => setShowOptionsDropdown(!showOptionsDropdown)}
-                className="p-2 hover:bg-gray-100 rounded-xl text-gray-600 hover:text-gray-900 transition-colors cursor-pointer"
+                className="p-1.5 hover:bg-gray-100 rounded-xl text-gray-500 hover:text-gray-900 transition-colors cursor-pointer"
                 title="Chat controls"
               >
-                <MoreVertical size={18} />
+                <MoreVertical size={17} />
               </button>
 
               {showOptionsDropdown && (
-                <div className="absolute right-0 mt-2 w-56 bg-white rounded-2xl shadow-xl ring-1 ring-black/5 py-1.5 z-40 animate-in fade-in zoom-in-95 duration-100">
-                  {/* Delete Chat */}
+                <div className="absolute right-0 mt-2 w-52 bg-white rounded-2xl shadow-xl border border-gray-100 p-1.5 z-40 animate-in fade-in zoom-in-95 duration-100">
+                  {/* Clear Chat */}
                   <button
                     type="button"
                     onClick={() => {
                       setShowOptionsDropdown(false);
                       setIsDeleteModalOpen(true);
                     }}
-                    className="w-full flex items-center gap-2.5 px-4 py-2.5 text-xs font-semibold text-gray-700 hover:bg-amber-50 hover:text-amber-800 transition-colors cursor-pointer"
+                    className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-amber-50 hover:text-amber-800 rounded-xl transition-colors cursor-pointer"
                   >
-                    <Trash2 size={15} className="text-amber-600" />
-                    <div className="text-left">
-                      <div>Delete Chat</div>
-                      <div className="text-[10px] text-gray-400 font-normal">
+                    <Trash2 size={15} className="text-amber-600 flex-shrink-0" />
+                    <div className="text-left leading-tight">
+                      <div className="font-semibold text-gray-800">Clear Chat</div>
+                      <div className="text-[10px] text-gray-400 font-normal mt-0.5">
                         Clears your view only
                       </div>
                     </div>
@@ -441,11 +582,51 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
       <div
         ref={messagesContainerRef}
         onScroll={handleScroll}
+        onContextMenu={handleChatAreaContextMenu}
         className="flex-1 overflow-y-auto px-4 sm:px-6 py-3 flex flex-col items-center"
       >
         <div className="w-full max-w-3xl flex-1 flex flex-col space-y-1">
         {conversation.messages.length === 0 ? (
-          conversation.businessDeletedAt && isBusiness ? (
+          isChatEnded && !isBusiness && onReopenChat ? (
+            <div className="h-full flex flex-col items-center justify-center text-center p-6 select-none animate-in fade-in duration-200">
+              <div className="w-14 h-14 rounded-2xl bg-amber-50 border border-amber-200/90 flex items-center justify-center text-amber-600 mb-3.5 shadow-sm">
+                <RefreshCw size={24} />
+              </div>
+              <h4 className="text-sm font-bold text-gray-900">
+                Reopen Conversation with {conversation.participant.name}?
+              </h4>
+              <p className="text-xs text-gray-500 max-w-sm mt-1.5 mb-5 leading-relaxed">
+                You previously had a chat with this business regarding <strong className="text-gray-800 font-semibold">{conversation.workspaceInfo?.name || 'Inquiry'}</strong>. Reopening will restore this chat session and allow both of you to continue messaging.
+              </p>
+              <div className="flex items-center gap-2.5">
+                {onBackToList && (
+                  <button
+                    type="button"
+                    onClick={onBackToList}
+                    className="px-4 py-2 text-xs font-semibold text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-xl transition-all cursor-pointer"
+                  >
+                    Not now
+                  </button>
+                )}
+                <button
+                  type="button"
+                  disabled={isActionSubmitting}
+                  onClick={async () => {
+                    setIsActionSubmitting(true);
+                    try {
+                      await onReopenChat(conversation.id);
+                    } finally {
+                      setIsActionSubmitting(false);
+                    }
+                  }}
+                  className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-black hover:bg-gray-800 text-white text-xs font-bold shadow-sm transition-all cursor-pointer disabled:opacity-50"
+                >
+                  <RefreshCw size={13} className={isActionSubmitting ? 'animate-spin' : ''} />
+                  <span>Re-open Chat</span>
+                </button>
+              </div>
+            </div>
+          ) : (conversation.businessDeletedAt && isBusiness) || (conversation.clientDeletedAt && !isBusiness) ? (
             <div className="h-full flex flex-col items-center justify-center text-center p-6">
               <div className="w-12 h-12 rounded-2xl bg-amber-50 border border-amber-200/80 flex items-center justify-center text-amber-600 mb-3 shadow-xs">
                 <Trash2 size={20} />
@@ -467,7 +648,7 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
           )
         ) : (
           <>
-            {conversation.businessDeletedAt && isBusiness && (
+            {((conversation.businessDeletedAt && isBusiness) || (conversation.clientDeletedAt && !isBusiness)) && (
               <div className="flex items-center justify-center mb-2">
                 <span className="text-[10px] font-semibold text-amber-800/80 bg-amber-50 border border-amber-200/60 px-3 py-1 rounded-full">
                   Earlier messages cleared from your view • Connection remains active
@@ -502,6 +683,7 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
                 return (
                   <div
                     key={msg.id}
+                    id={`msg-${msg.id}`}
                     className={`flex items-start gap-2.5 group ${
                       isMe ? 'flex-row-reverse' : ''
                     } ${isSameSenderAsPrev ? 'mt-0.5' : 'mt-2'}`}
@@ -530,110 +712,197 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
                           <span className="text-[10px] text-gray-400 font-normal">
                             {msg.timestamp}
                           </span>
+                          {msg.isEdited && (
+                            <span
+                              className="text-[9px] text-gray-400 italic font-normal"
+                              title={
+                                msg.editedAt
+                                  ? `Edited at ${new Date(msg.editedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+                                  : 'Edited'
+                              }
+                            >
+                              (edited)
+                            </span>
+                          )}
                           {isMe && renderDeliveryStatus(msg.status)}
 
-                          {/* Delete individual chat message */}
-                          {isBusiness && onDeleteMessage && (
-                            <button
-                              type="button"
-                              onClick={() => onDeleteMessage(msg.id)}
-                              className="opacity-0 group-hover:opacity-100 p-0.5 text-gray-400 hover:text-amber-700 hover:bg-amber-100/70 rounded transition-all cursor-pointer"
-                              title="Delete this message from your view"
-                            >
-                              <Trash2 size={11} />
-                            </button>
-                          )}
+                          {/* Delete individual chat message (Allowed only within 15 mins of sending, sender only) */}
+                          {onDeleteMessage && isMe && (() => {
+                            const FIFTEEN_MINUTES_MS = 15 * 60 * 1000;
+                            const msgTime = msg.createdAt || 0;
+                            const isWithin15Mins = msgTime > 0 ? (currentTime - msgTime) <= FIFTEEN_MINUTES_MS : true;
+
+                            if (!isWithin15Mins) return null;
+
+                            return (
+                              <button
+                                type="button"
+                                onClick={() => onDeleteMessage(msg.id)}
+                                className="opacity-0 group-hover:opacity-100 p-0.5 text-gray-400 hover:text-amber-700 hover:bg-amber-100/70 rounded transition-all cursor-pointer"
+                                title="Delete this message (available for 15 mins)"
+                              >
+                                <Trash2 size={11} />
+                              </button>
+                            );
+                          })()}
                         </div>
                       )}
 
-                      {/* Message Body (Styling matching top bar #f6f7f9 with sleek crisp borders) */}
+                      {/* Message Body */}
                       {(() => {
                         const isLocation = msg.attachment?.type === 'location';
                         const isAutoLocationText = msg.content === 'Shared location coordinates';
                         const displayContent = isAutoLocationText ? null : msg.content;
                         const hasMediaOnly = !displayContent && ((msg.attachments && msg.attachments.length > 0) || msg.attachment);
+                        const isEditingThis = editingMessageId === msg.id;
 
                         return (
                           <div
-                            className={`rounded-lg transition-all ${
+                            data-message-item="true"
+                            onContextMenu={(e) => handleMessageContextMenu(e, msg)}
+                            className={
                               hasMediaOnly
-                                ? isMe
-                                  ? 'bg-[#f6f7f9] p-[3px] border border-gray-300/80 shadow-xs'
-                                  : 'bg-[#f6f7f9] p-[3px] border border-gray-200/80 shadow-xs'
-                                : `px-3 py-1.5 text-xs leading-snug space-y-1 ${
+                                ? 'p-0 bg-transparent border-0 shadow-none'
+                                : `rounded-lg px-3 py-1.5 text-xs leading-snug space-y-1 transition-all ${
                                     isMe
-                                      ? 'bg-[#f6f7f9] text-gray-900 border border-gray-300/90 shadow-2xs'
-                                      : 'bg-[#ffffff] text-gray-800 border border-gray-200/90 shadow-2xs'
+                                      ? 'bg-[#ebedf7] text-gray-900 border border-indigo-100/60 shadow-2xs'
+                                      : 'bg-[#f4f5f8] text-gray-800 border border-gray-200/60 shadow-2xs'
                                   }`
-                            }`}
+                            }
                           >
-                            {/* Content text (omitted if auto-generated location placeholder) */}
-                            {displayContent && <p className="whitespace-pre-wrap">{displayContent}</p>}
+                            {/* Content text or inline editor */}
+                            {isEditingThis ? (
+                              <div className="w-full min-w-[220px] max-w-[340px] space-y-2 py-1 select-text">
+                                <textarea
+                                  value={editingText}
+                                  onChange={(e) => setEditingText(e.target.value)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter' && !e.shiftKey) {
+                                      e.preventDefault();
+                                      handleSaveEdit(msg.id);
+                                    } else if (e.key === 'Escape') {
+                                      e.preventDefault();
+                                      setEditingMessageId(null);
+                                    }
+                                  }}
+                                  rows={Math.min(5, Math.max(2, editingText.split('\n').length))}
+                                  className="w-full text-xs p-2 rounded-md border border-blue-400 bg-white focus:outline-hidden focus:ring-2 focus:ring-blue-100 text-gray-900 resize-none leading-snug"
+                                  autoFocus
+                                />
+                                <div className="flex items-center justify-between gap-2 text-[10px] text-gray-400">
+                                  <span>Esc to cancel • Enter to save</span>
+                                  <div className="flex items-center gap-1.5">
+                                    <button
+                                      type="button"
+                                      onClick={() => setEditingMessageId(null)}
+                                      disabled={isSavingEdit}
+                                      className="px-2 py-0.5 rounded text-gray-500 hover:bg-gray-200/80 hover:text-gray-700 transition-colors font-medium cursor-pointer"
+                                    >
+                                      Cancel
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleSaveEdit(msg.id)}
+                                      disabled={isSavingEdit || !editingText.trim()}
+                                      className="px-2.5 py-0.5 rounded bg-blue-600 hover:bg-blue-700 text-white font-medium transition-colors shadow-2xs disabled:opacity-50 cursor-pointer flex items-center gap-1"
+                                    >
+                                      {isSavingEdit ? (
+                                        <RefreshCw size={10} className="animate-spin" />
+                                      ) : (
+                                        <Check size={10} />
+                                      )}
+                                      Save
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            ) : (
+                              displayContent && <p className="whitespace-pre-wrap">{displayContent}</p>
+                            )}
 
                             {/* Attachments Display */}
                             {msg.attachments && msg.attachments.length > 0 ? (
-                              /* Attachments (Images and/or PDFs) in a single line horizontal scroll */
-                              <div className={displayContent ? 'mt-1.5 pt-1.5 border-t border-gray-200/80' : ''}>
-                                <div className="flex items-center gap-1.5 overflow-x-auto p-0.5 scrollbar-thin max-w-full">
-                                  {msg.attachments.map((att, idx) => (
-                                    att.type === 'pdf' ? (
-                                      <div
-                                        key={att.id || idx}
-                                        onClick={() =>
-                                          setPreviewPdf({
-                                            url: att.url,
-                                            name: att.name,
-                                            size: att.size,
-                                          })
-                                        }
-                                        className="relative flex-shrink-0 w-36 h-28 sm:w-44 sm:h-32 rounded-md overflow-hidden bg-white text-gray-900 border border-gray-200 shadow-xs cursor-pointer group/pdf hover:border-blue-500 hover:ring-2 hover:ring-blue-100 transition-all flex flex-col"
-                                        title="Click to view PDF document"
-                                      >
-                                        {/* PDF visual preview area with first-page render */}
-                                        <div className="flex-1 relative overflow-hidden bg-gray-50">
-                                          <PdfThumbnail
-                                            url={att.url}
-                                            name={att.name}
-                                            thumbnailUrl={att.thumbnailUrl}
-                                          />
-                                        </div>
-                                        {/* PDF filename footer */}
-                                        <div className="px-2 py-1.5 bg-gray-50 border-t border-gray-100 flex items-center justify-between gap-1 text-gray-900">
-                                          <span className="text-[11px] font-semibold truncate group-hover/pdf:underline leading-tight">
-                                            {att.name}
-                                          </span>
-                                          <span className="flex items-center gap-0.5 text-[10px] font-semibold text-blue-600 flex-shrink-0 group-hover/pdf:translate-x-0.5 transition-transform">
-                                            <ExternalLink size={10} />
-                                          </span>
-                                        </div>
-                                      </div>
-                                    ) : att.url ? (
-                                      <div
-                                        key={att.id || idx}
-                                        onClick={() =>
-                                          setPreviewImage({
-                                            url: att.url,
-                                            name: att.name,
-                                          })
-                                        }
-                                        className="relative flex-shrink-0 w-24 h-24 sm:w-28 sm:h-28 rounded-md overflow-hidden bg-white border border-gray-200 shadow-xs cursor-pointer group/item hover:border-blue-500 hover:ring-2 hover:ring-blue-100 transition-all"
-                                        title="Click to view image"
-                                      >
-                                        <Image
-                                          src={att.url}
-                                          alt={att.name || 'Image'}
-                                          fill
-                                          className="object-cover transition-transform duration-200 group-hover/item:scale-105"
-                                          unoptimized
-                                        />
-                                        <div className="absolute inset-0 bg-black/0 group-hover/item:bg-black/20 transition-all flex items-center justify-center opacity-0 group-hover/item:opacity-100">
-                                          <Maximize2 size={14} className="text-white drop-shadow-md" />
-                                        </div>
-                                      </div>
-                                    ) : null
-                                  ))}
-                                </div>
-                              </div>
+                              /* Dynamic Grid: 2x2 for 4 items, 3x3 for 5+ items, 2-col for 2 items, 3-col for 3 */
+                              (() => {
+                                const count = msg.attachments.length;
+                                const isFour = count === 4;
+                                const isThreeOrMore = count >= 3 && !isFour;
+                                
+                                const gridClass = isFour
+                                  ? 'grid grid-cols-2 gap-1.5 p-0.5 w-[280px] sm:w-[320px]'
+                                  : isThreeOrMore
+                                  ? 'grid grid-cols-3 gap-1.5 p-0.5 w-[300px] sm:w-[360px]'
+                                  : 'grid grid-cols-2 gap-1.5 p-0.5 w-[280px] sm:w-[320px]';
+
+                                const itemHeightClass = isThreeOrMore
+                                  ? 'h-24 sm:h-28'
+                                  : 'h-28 sm:h-32';
+
+                                return (
+                                  <div className={displayContent ? 'mt-1.5 pt-1.5 border-t border-gray-200/80' : ''}>
+                                    <div className={gridClass}>
+                                      {msg.attachments.map((att, idx) => (
+                                        att.type === 'pdf' ? (
+                                          <div
+                                            key={att.id || idx}
+                                            onClick={() =>
+                                              setPreviewPdf({
+                                                url: att.url,
+                                                name: att.name,
+                                                size: att.size,
+                                              })
+                                            }
+                                            className={`relative w-full ${isThreeOrMore ? 'h-28 sm:h-32' : 'h-32 sm:h-36'} rounded-md overflow-hidden bg-white text-gray-900 border border-gray-200 shadow-xs cursor-pointer group/pdf hover:border-blue-500 hover:ring-2 hover:ring-blue-100 transition-all flex flex-col`}
+                                            title="Click to view PDF document"
+                                          >
+                                            {/* PDF visual preview area with first-page render */}
+                                            <div className="flex-1 relative overflow-hidden bg-gray-50">
+                                              <PdfThumbnail
+                                                url={att.url}
+                                                name={att.name}
+                                                thumbnailUrl={att.thumbnailUrl}
+                                              />
+                                            </div>
+                                            {/* PDF filename footer */}
+                                            <div className="px-1.5 py-1 bg-gray-50 border-t border-gray-100 flex items-center justify-between gap-1 text-gray-900">
+                                              <span className="text-[10px] font-semibold truncate group-hover/pdf:underline leading-tight">
+                                                {att.name}
+                                              </span>
+                                              <span className="flex items-center gap-0.5 text-[9px] font-semibold text-blue-600 flex-shrink-0 group-hover/pdf:translate-x-0.5 transition-transform">
+                                                <ExternalLink size={9} />
+                                              </span>
+                                            </div>
+                                          </div>
+                                        ) : (att.url || att.thumbnailUrl) ? (
+                                          <div
+                                            key={att.id || idx}
+                                            onClick={() =>
+                                              setPreviewImage({
+                                                url: att.url || att.thumbnailUrl || '',
+                                                name: att.name,
+                                              })
+                                            }
+                                            className={`relative w-full ${itemHeightClass} rounded-md overflow-hidden bg-gray-100 border border-gray-200 shadow-xs cursor-pointer group/item hover:border-blue-500 hover:ring-2 hover:ring-blue-100 transition-all`}
+                                            title="Click to view image"
+                                          >
+                                            <Image
+                                              src={att.url || att.thumbnailUrl || ''}
+                                              alt={att.name || 'Image'}
+                                              fill
+                                              sizes="(max-width: 640px) 100px, 120px"
+                                              className="object-cover transition-transform duration-200 group-hover/item:scale-105"
+                                              unoptimized
+                                            />
+                                            <div className="absolute inset-0 bg-black/0 group-hover/item:bg-black/20 transition-all flex items-center justify-center opacity-0 group-hover/item:opacity-100">
+                                              <Maximize2 size={14} className="text-white drop-shadow-md" />
+                                            </div>
+                                          </div>
+                                        ) : null
+                                      ))}
+                                    </div>
+                                  </div>
+                                );
+                              })()
                             ) : msg.attachment ? (
                               <div className={displayContent ? 'mt-1.5 pt-1.5 border-t border-gray-200/80' : ''}>
                                 {/* If Expired: */}
@@ -891,26 +1160,26 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
         ) : (
           <form
             onSubmit={handleSend}
-            className="w-full max-w-3xl flex items-center gap-1.5 sm:gap-2.5 border border-gray-200/90 rounded-full px-3 sm:px-4 py-1.5 sm:py-2 bg-white/95 backdrop-blur-md shadow-[0_4px_20px_rgba(0,0,0,0.06)] hover:shadow-[0_6px_24px_rgba(0,0,0,0.08)] focus-within:border-blue-400 focus-within:ring-2 focus-within:ring-blue-100 transition-all"
+            className="w-full max-w-3xl flex items-center gap-1.5 sm:gap-2.5 border border-gray-200/90 rounded-xl px-3 sm:px-4 py-1.5 sm:py-2 bg-white shadow-[0_2px_12px_rgba(0,0,0,0.03)] hover:shadow-[0_4px_16px_rgba(0,0,0,0.06)] focus-within:border-indigo-400 focus-within:ring-2 focus-within:ring-indigo-100 transition-all"
           >
             {/* Attachment Button (Images & PDF only, 48h warning) */}
             <button
               type="button"
               onClick={() => setIsAttachmentModalOpen(true)}
-              className="text-gray-400 hover:text-gray-800 p-1 sm:p-1.5 hover:bg-gray-100 rounded-full transition-colors flex-shrink-0 cursor-pointer"
+              className="text-gray-400 hover:text-gray-700 p-1 sm:p-1.5 hover:bg-gray-100 rounded-lg transition-colors flex-shrink-0 cursor-pointer"
               title="Attach Image or PDF (Auto-deletes in 48h)"
             >
-              <Paperclip size={17} />
+              <Paperclip size={16} />
             </button>
 
             {/* Location Share Button */}
             <button
               type="button"
               onClick={() => setIsLocationModalOpen(true)}
-              className="text-gray-400 hover:text-green-600 p-1 sm:p-1.5 hover:bg-green-50 rounded-full transition-colors flex-shrink-0 cursor-pointer"
+              className="text-gray-400 hover:text-indigo-600 p-1 sm:p-1.5 hover:bg-indigo-50 rounded-lg transition-colors flex-shrink-0 cursor-pointer"
               title="Share Location"
             >
-              <MapPin size={17} />
+              <MapPin size={16} />
             </button>
 
             {/* Text Input */}
@@ -932,11 +1201,11 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
                   ? 'Sharing prohibited sensitive credentials or financial details is not allowed'
                   : undefined
               }
-              className={`flex items-center gap-1.5 px-3.5 sm:px-4 py-1.5 sm:py-1.5 rounded-full text-xs font-semibold text-white transition-all shadow-2xs flex-shrink-0 ${
+              className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold text-white transition-all shadow-xs flex-shrink-0 ${
                 sensitiveCheck.isBlocked
                   ? 'bg-red-400 cursor-not-allowed opacity-75'
                   : inputText.trim()
-                  ? 'bg-[#0066ff] hover:bg-[#0052cc] cursor-pointer shadow-xs'
+                  ? 'bg-[#5b52f9] hover:bg-[#4a41e8] cursor-pointer'
                   : 'bg-gray-300 text-gray-500 cursor-not-allowed'
               }`}
             >
@@ -995,6 +1264,176 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
           pdfName={previewPdf.name}
           pdfSize={previewPdf.size}
         />
+      )}
+
+      {/* Right-Click Context Menu for Chat Area */}
+      {chatAreaContextMenu && (
+        <div
+          style={{ top: `${chatAreaContextMenu.y}px`, left: `${chatAreaContextMenu.x}px` }}
+          className="fixed z-50 min-w-[200px] bg-white rounded-2xl shadow-2xl border border-gray-200/90 py-1.5 text-xs select-none animate-in fade-in zoom-in-95 duration-100"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {/* Header indicator */}
+          <div className="px-3.5 py-1.5 text-[10px] font-bold text-gray-400 uppercase tracking-wider border-b border-gray-100 mb-1">
+            Chat Controls
+          </div>
+
+          {/* End Chat Session (Client action, or Business if available) */}
+          {!isChatEnded && onEndChat && (
+            <button
+              type="button"
+              onClick={() => {
+                setChatAreaContextMenu(null);
+                setIsEndModalOpen(true);
+              }}
+              className="w-full flex items-center gap-2.5 px-3.5 py-2 text-left text-red-600 hover:bg-red-50 hover:text-red-700 transition-colors cursor-pointer group"
+            >
+              <Ban size={14} className="text-red-500 group-hover:text-red-600" />
+              <div className="flex flex-col">
+                <span className="font-semibold text-red-700">End Chat Session</span>
+                <span className="text-[10px] text-red-400">Permanently terminate</span>
+              </div>
+            </button>
+          )}
+
+          {/* Clear Chat (Business & Client) */}
+          {onDeleteChat && (
+            <button
+              type="button"
+              onClick={() => {
+                setChatAreaContextMenu(null);
+                setIsDeleteModalOpen(true);
+              }}
+              className="w-full flex items-center gap-2.5 px-3.5 py-2 text-left text-gray-700 hover:bg-amber-50 hover:text-amber-800 transition-colors cursor-pointer group"
+            >
+              <Trash2 size={14} className="text-amber-600 group-hover:text-amber-700" />
+              <div className="flex flex-col">
+                <span className="font-semibold text-gray-800 group-hover:text-amber-800">Clear Chat</span>
+                <span className="text-[10px] text-gray-400">Clears your view only</span>
+              </div>
+            </button>
+          )}
+
+          {/* Re-open Chat (when session is ended) */}
+          {isChatEnded && !isBusiness && onReopenChat && (
+            <button
+              type="button"
+              onClick={async () => {
+                setChatAreaContextMenu(null);
+                setIsActionSubmitting(true);
+                try {
+                  await onReopenChat(conversation.id);
+                } finally {
+                  setIsActionSubmitting(false);
+                }
+              }}
+              className="w-full flex items-center gap-2.5 px-3.5 py-2 text-left text-blue-600 hover:bg-blue-50 transition-colors cursor-pointer group"
+            >
+              <RefreshCw size={14} className="text-blue-500" />
+              <div className="flex flex-col">
+                <span className="font-semibold text-blue-700">Reopen Chat</span>
+                <span className="text-[10px] text-blue-400">Restore communication</span>
+              </div>
+            </button>
+          )}
+
+          {/* Close / Toggle Details Sidebar */}
+          {onToggleDetails && (
+            <button
+              type="button"
+              onClick={() => {
+                setChatAreaContextMenu(null);
+                onToggleDetails();
+              }}
+              className="w-full flex items-center gap-2.5 px-3.5 py-2 text-left text-gray-700 hover:bg-gray-100 transition-colors cursor-pointer group"
+            >
+              <PanelRight size={14} className="text-gray-500" />
+              <div className="flex flex-col">
+                <span className="font-medium text-gray-800">
+                  {isDetailsOpen ? 'Close Details Sidebar' : 'View Conversation Details'}
+                </span>
+                <span className="text-[10px] text-gray-400">Toggle info panel</span>
+              </div>
+            </button>
+          )}
+
+          {/* Back to Chats (Mobile / Close active chat view) */}
+          {onBackToList && (
+            <div className="border-t border-gray-100 mt-1 pt-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setChatAreaContextMenu(null);
+                  onBackToList();
+                }}
+                className="w-full flex items-center gap-2.5 px-3.5 py-2 text-left text-gray-600 hover:bg-gray-100 transition-colors cursor-pointer"
+              >
+                <ChevronLeft size={14} className="text-gray-400" />
+                <span className="font-medium text-gray-700">Close Chat View</span>
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Right-Click Context Menu for Individual Message */}
+      {contextMenu && (
+        <div
+          style={{ top: `${contextMenu.y}px`, left: `${contextMenu.x}px` }}
+          className="fixed z-50 min-w-[170px] bg-white rounded-xl shadow-xl border border-gray-200/90 py-1 text-xs select-none animate-in fade-in zoom-in-95 duration-100"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {contextMenu.canEdit && (
+            <button
+              type="button"
+              onClick={() => {
+                const target = contextMenu.message;
+                setContextMenu(null);
+                setEditingMessageId(target.id);
+                setEditingText(target.content);
+              }}
+              className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-gray-700 hover:bg-blue-50 hover:text-blue-700 transition-colors cursor-pointer group"
+            >
+              <Pencil size={13} className="text-gray-500 group-hover:text-blue-600" />
+              <div className="flex flex-col">
+                <span className="font-medium text-gray-900 group-hover:text-blue-700">Edit message</span>
+                <span className="text-[10px] text-gray-400">Available within 10m</span>
+              </div>
+            </button>
+          )}
+
+          {contextMenu.canDelete && (
+            <button
+              type="button"
+              onClick={() => {
+                const msgId = contextMenu.message.id;
+                setContextMenu(null);
+                onDeleteMessage?.(msgId);
+              }}
+              className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-gray-700 hover:bg-amber-50 hover:text-amber-800 transition-colors cursor-pointer group"
+            >
+              <Trash2 size={13} className="text-gray-500 group-hover:text-amber-600" />
+              <div className="flex flex-col">
+                <span className="font-medium text-gray-900 group-hover:text-amber-800">Delete message</span>
+                <span className="text-[10px] text-gray-400">Clears your view</span>
+              </div>
+            </button>
+          )}
+
+          {contextMenu.message.content && (
+            <button
+              type="button"
+              onClick={() => {
+                navigator.clipboard.writeText(contextMenu.message.content);
+                setContextMenu(null);
+              }}
+              className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-gray-700 hover:bg-gray-100 transition-colors cursor-pointer"
+            >
+              <Copy size={13} className="text-gray-500" />
+              <span>Copy text</span>
+            </button>
+          )}
+        </div>
       )}
     </div>
   );

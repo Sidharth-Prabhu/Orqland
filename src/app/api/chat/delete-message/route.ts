@@ -7,13 +7,10 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const { conversationId, messageId, userEmail } = body;
 
-    if (!isBusinessUser(userEmail)) {
+    if (!userEmail) {
       return NextResponse.json(
-        {
-          error:
-            'Permission Denied: Only the Business account can delete messages from their view.',
-        },
-        { status: 403 }
+        { error: 'User email is required.' },
+        { status: 400 }
       );
     }
 
@@ -32,7 +29,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      message: 'Message deleted from business view only.',
+      message: 'Message deleted from your view.',
       conversation: updated,
     });
   } catch (error: unknown) {

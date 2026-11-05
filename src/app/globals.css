@@ -48,3 +48,10 @@
 ::-webkit-scrollbar-thumb:hover {
   background: #9ca3af;
 }
+
+/* Subtle decorative wave gradient for the left sidebar bottom */
+.sidebar-wave-gradient {
+  background-image: 
+    radial-gradient(ellipse at 0% 100%, rgba(200, 185, 255, 0.45) 0%, rgba(230, 220, 255, 0.25) 35%, rgba(246, 247, 252, 0) 70%),
+    radial-gradient(ellipse at 100% 90%, rgba(220, 210, 255, 0.35) 0%, rgba(246, 247, 252, 0) 60%);
+}

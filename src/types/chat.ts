@@ -52,6 +52,10 @@ export interface ChatMessage {
   attachment?: ChatAttachment;
   attachments?: ChatAttachment[];
   deletedByBusiness?: boolean;
+  deletedByClient?: boolean;
+  deletedForEveryone?: boolean;
+  isEdited?: boolean;
+  editedAt?: number;
 }
 
 export type ConversationLifecycleStatus = 'active' | 'ended';
@@ -80,6 +84,7 @@ export interface Conversation {
   endedBy?: string;
   deletedByBusiness?: boolean;
   businessDeletedAt?: number;
+  clientDeletedAt?: number;
   deletedForClient?: boolean;
   lastMessage: string;
   lastMessageTime: string;
@@ -96,5 +101,7 @@ export interface Conversation {
     serviceName: string;
     status: 'Processing' | 'Confirmed' | 'Completed' | 'Pending';
   };
+  businessNotes?: string;
+  notesUpdatedAt?: number;
   messages: ChatMessage[];
 }

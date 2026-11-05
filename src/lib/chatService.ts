@@ -79,17 +79,37 @@ function sanitizeForLocalStorage(convs: Conversation[]): Conversation[] {
   }));
 }
 
-// Helper to broadcast events across other tabs via BroadcastChannel (never loops within the same tab)
+// Shared singleton BroadcastChannel across the tab
+let sharedBroadcastChannel: BroadcastChannel | null = null;
+function getBroadcastChannel(): BroadcastChannel | null {
+  if (typeof window === 'undefined') return null;
+  if (!('BroadcastChannel' in window)) return null;
+  if (!sharedBroadcastChannel) {
+    try {
+      sharedBroadcastChannel = new BroadcastChannel(CHANNEL_NAME);
+    } catch {
+      sharedBroadcastChannel = null;
+    }
+  }
+  return sharedBroadcastChannel;
+}
+
+// Helper to broadcast events across other tabs via BroadcastChannel & Storage events
 function notifyCrossTab() {
   if (typeof window !== 'undefined') {
     try {
-      if ('BroadcastChannel' in window) {
-        const bc = new BroadcastChannel(CHANNEL_NAME);
+      const bc = getBroadcastChannel();
+      if (bc) {
         bc.postMessage({ type: 'CHAT_UPDATED', senderTabId: TAB_ID, timestamp: Date.now() });
-        bc.close();
       }
     } catch {
-      // Ignore broadcast errors
+      // Ignore broadcast channel errors
+    }
+    try {
+      // Storage event fallback: triggers 'storage' event in all other browser tabs
+      localStorage.setItem('orqland_cross_tab_ping', String(Date.now()));
+    } catch {
+      // Ignore localStorage errors
     }
   }
 }
@@ -316,17 +336,17 @@ export const chatService = {
 
     // Update local cache with cleared history conversation
     const updatedConv: Conversation = data.conversation;
-    const latest = loadCachedConversations().map((c) =>
+    const latest = loadCachedConversations(userEmail).map((c) =>
       c.id === updatedConv.id ? updatedConv : c
     );
-    saveCachedConversations(latest);
+    saveCachedConversations(latest, userEmail);
     notifyCrossTab();
 
     return updatedConv;
   },
 
   /**
-   * Delete an individual message from business view
+   * Delete an individual message (sender only, within 15 minutes)
    */
   async deleteMessage(
     conversationId: string,
@@ -345,10 +365,40 @@ export const chatService = {
     }
 
     const updatedConv: Conversation = data.conversation;
-    const latest = loadCachedConversations().map((c) =>
+    const latest = loadCachedConversations(userEmail).map((c) =>
       c.id === updatedConv.id ? updatedConv : c
     );
-    saveCachedConversations(latest);
+    saveCachedConversations(latest, userEmail);
+    notifyCrossTab();
+
+    return updatedConv;
+  },
+
+  /**
+   * Edit an individual message (sender only, within 10 minutes)
+   */
+  async editMessage(
+    conversationId: string,
+    messageId: string,
+    newContent: string,
+    userEmail: string
+  ): Promise<Conversation> {
+    const res = await fetch('/api/chat/edit-message', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ conversationId, messageId, newContent, userEmail }),
+    });
+
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      throw new Error(data.error || 'Failed to edit message.');
+    }
+
+    const updatedConv: Conversation = data.conversation;
+    const latest = loadCachedConversations(userEmail).map((c) =>
+      c.id === updatedConv.id ? updatedConv : c
+    );
+    saveCachedConversations(latest, userEmail);
     notifyCrossTab();
 
     return updatedConv;
@@ -370,10 +420,11 @@ export const chatService = {
     }
 
     const updatedConv: Conversation = data.conversation;
-    const latest = loadCachedConversations().map((c) =>
+    const latest = loadCachedConversations(userEmail).map((c) =>
       c.id === updatedConv.id ? updatedConv : c
     );
-    saveCachedConversations(latest);
+    saveCachedConversations(latest, userEmail);
+    notifyCrossTab();
 
     return updatedConv;
   },
@@ -381,11 +432,11 @@ export const chatService = {
   /**
    * Reopen an ended Chat session
    */
-  async reopenChat(conversationId: string, userEmail: string): Promise<Conversation> {
+  async reopenChat(conversationId: string, userEmail: string, workspaceName?: string): Promise<Conversation> {
     const res = await fetch('/api/chat/reopen', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ conversationId, userEmail }),
+      body: JSON.stringify({ conversationId, userEmail, workspaceName }),
     });
 
     const data = await res.json();
@@ -394,10 +445,11 @@ export const chatService = {
     }
 
     const updatedConv: Conversation = data.conversation;
-    const latest = loadCachedConversations().map((c) =>
+    const latest = loadCachedConversations(userEmail).map((c) =>
       c.id === updatedConv.id ? updatedConv : c
     );
-    saveCachedConversations(latest);
+    saveCachedConversations(latest, userEmail);
+    notifyCrossTab();
 
     return updatedConv;
   },
@@ -409,11 +461,12 @@ export const chatService = {
     if (!conversationId || !readerEmail) return;
 
     // Optimistically zero unread count
-    const current = loadCachedConversations();
+    const current = loadCachedConversations(readerEmail);
     const idx = current.findIndex((c) => c.id === conversationId);
     if (idx >= 0 && current[idx].unreadCount > 0) {
       current[idx].unreadCount = 0;
-      saveCachedConversations(current);
+      saveCachedConversations(current, readerEmail);
+      notifyCrossTab();
     }
 
     try {
@@ -457,30 +510,60 @@ export const chatService = {
     });
 
     // 3. Cross-tab real-time listener (responds to updates from other open tabs/windows)
-    let bc: BroadcastChannel | null = null;
-    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
-      bc = new BroadcastChannel(CHANNEL_NAME);
-      bc.onmessage = (event) => {
-        // Only react to updates originating from other tabs to prevent redundant local fetches
-        if (event.data?.senderTabId && event.data.senderTabId === TAB_ID) return;
-        chatService.fetchConversations(email).then((fresh) => {
-          onUpdate(fresh);
-        });
-      };
+    const handleRemoteUpdate = () => {
+      chatService.fetchConversations(email).then((fresh) => {
+        onUpdate(fresh);
+      });
+    };
+
+    const bc = getBroadcastChannel();
+    const handleBcMessage = (event: MessageEvent) => {
+      // Only react to updates originating from other tabs to prevent redundant local fetches
+      if (event.data?.senderTabId && event.data.senderTabId === TAB_ID) return;
+      handleRemoteUpdate();
+    };
+
+    if (bc) {
+      bc.addEventListener('message', handleBcMessage);
     }
 
-    // 4. Background polling loop (every 1.5s) to guarantee cross-device & cross-browser synchronization
+    // Storage event listener: fires in all other tabs on the same origin when localStorage changes
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === 'orqland_cross_tab_ping') {
+        handleRemoteUpdate();
+      }
+    };
+
+    // Instant sync when tab regains focus or visibility
+    const handleVisibility = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        handleRemoteUpdate();
+      }
+    };
+
+    if (typeof window !== 'undefined') {
+      window.addEventListener('storage', handleStorage);
+      window.addEventListener('focus', handleRemoteUpdate);
+      document.addEventListener('visibilitychange', handleVisibility);
+    }
+
+    // 4. Background polling loop (every 1s) to guarantee fast cross-device & cross-browser synchronization
     const interval = setInterval(() => {
       chatService.fetchConversations(email).then((fresh) => {
         onUpdate(fresh);
       });
-    }, 1500);
+    }, 1000);
 
     return () => {
       activeSubscribers.get(email)?.delete(onUpdate);
       clearInterval(interval);
       if (bc) {
-        bc.close();
+        bc.removeEventListener('message', handleBcMessage);
+      }
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('storage', handleStorage);
+        window.removeEventListener('focus', handleRemoteUpdate);
+        document.removeEventListener('visibilitychange', handleVisibility);
       }
     };
   },

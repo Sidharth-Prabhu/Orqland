@@ -63,10 +63,10 @@ export const UserMenu: React.FC<UserMenuProps> = ({ onOpenAuthModal }) => {
         aria-expanded={isOpen}
       >
         <div className="text-right hidden sm:block">
-          <div className="text-[14px] font-bold text-black leading-tight group-hover:text-blue-600 transition-colors">
+          <div className="text-[13px] font-bold text-gray-900 leading-tight">
             {displayName}
           </div>
-          <div className="text-[11px] text-gray-400 font-medium truncate max-w-[140px]">
+          <div className="text-[10px] text-gray-400 font-normal truncate max-w-[130px]">
             {displayEmail}
           </div>
         </div>
@@ -76,10 +76,8 @@ export const UserMenu: React.FC<UserMenuProps> = ({ onOpenAuthModal }) => {
           <UserAvatar
             src={user.photoURL}
             name={displayName}
-            size={36}
+            size={34}
           />
-          {/* Active online dot */}
-          <span className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-[#10e588] ring-2 ring-white" />
         </div>
       </button>
 

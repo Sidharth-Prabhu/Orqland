@@ -7,14 +7,10 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const { conversationId, userEmail } = body;
 
-    // Backend-enforced check: Delete Chat is available only to the Business
-    if (!isBusinessUser(userEmail)) {
+    if (!userEmail) {
       return NextResponse.json(
-        {
-          error:
-            'Permission Denied: Only the Business account can delete conversation history from their view.',
-        },
-        { status: 403 }
+        { error: 'User email is required.' },
+        { status: 400 }
       );
     }
 
@@ -30,7 +26,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       success: true,
       message:
-        'Conversation deleted from business view only. Communication connection and client history remain active.',
+        'Conversation cleared from your view only. Communication connection and recipient history remain active.',
       conversation: updated,
     });
   } catch (error: unknown) {

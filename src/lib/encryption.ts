@@ -97,6 +97,12 @@ function encryptSingleConversation(conv: Conversation): Conversation {
           url: encryptAtRest(encryptedMsg.attachment.url),
         };
       }
+      if (Array.isArray(encryptedMsg.attachments) && encryptedMsg.attachments.length > 0) {
+        encryptedMsg.attachments = encryptedMsg.attachments.map((att) => ({
+          ...att,
+          url: att.url ? encryptAtRest(att.url) : att.url,
+        }));
+      }
       return encryptedMsg;
     });
   }
@@ -143,6 +149,12 @@ function decryptSingleConversation(conv: Conversation): Conversation {
               }
             : undefined,
         };
+      }
+      if (Array.isArray(decryptedMsg.attachments) && decryptedMsg.attachments.length > 0) {
+        decryptedMsg.attachments = decryptedMsg.attachments.map((att) => ({
+          ...att,
+          url: att.url ? decryptAtRest(att.url) : att.url,
+        }));
       }
       return decryptedMsg;
     });

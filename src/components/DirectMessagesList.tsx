@@ -1,8 +1,8 @@
 'use client';
 
-import React, { useState } from 'react';
-import { Search, MessageSquare, Plus, Lock, Trash2 } from 'lucide-react';
-import { Conversation } from '@/types/chat';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
+import { Search, MessageSquare, Plus, Lock, Trash2, X, ExternalLink, Copy, Check } from 'lucide-react';
+import { Conversation, UserProfile } from '@/types/chat';
 import { UserAvatar } from '@/components/ui/UserAvatar';
 
 interface DirectMessagesListProps {
@@ -10,6 +10,7 @@ interface DirectMessagesListProps {
   activeConversationId: string;
   onSelectConversation: (id: string) => void;
   isBusiness: boolean;
+  businessProfile?: UserProfile;
   onOpenStartChat?: () => void;
   onDeleteConversation?: (id: string) => void;
   className?: string;
@@ -21,28 +22,133 @@ export const DirectMessagesList: React.FC<DirectMessagesListProps> = ({
   activeConversationId,
   onSelectConversation,
   isBusiness,
+  businessProfile,
   onOpenStartChat,
   onDeleteConversation,
   className = '',
   style,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
-
-  const filteredConversations = conversations.filter((c) =>
-    c.participant.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    c.participant.email?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    'new message'.includes(searchQuery.toLowerCase())
+  const [activeTab, setActiveTab] = useState<'all' | 'open' | 'waiting' | 'resolved'>('all');
+  const [wsidCopied, setWsidCopied] = useState(false);
+  const [businessStatus, setBusinessStatus] = useState<'Closed' | 'Open'>(
+    businessProfile?.businessStatus || 'Open'
   );
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  const handleCopyWsid = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const wsid = businessProfile?.wsid || 'WS#ENOJEXBC#';
+    navigator.clipboard.writeText(wsid);
+    setWsidCopied(true);
+    setTimeout(() => setWsidCopied(false), 2000);
+  };
+
+  const handleToggleStatus = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setBusinessStatus((prev) => (prev === 'Closed' ? 'Open' : 'Closed'));
+  };
+
+  // Global shortcut: ⌘ K / Ctrl+K focuses the search input
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  // Adaptively categorize conversation for viewer
+  const getConversationCategory = (conv: Conversation): 'open' | 'waiting' | 'resolved' => {
+    if (conv.status === 'ended') {
+      return 'resolved';
+    }
+
+    const messages = conv.messages || [];
+    const lastMsg = messages.length > 0 ? messages[messages.length - 1] : null;
+
+    if (!lastMsg) {
+      return 'open';
+    }
+
+    if (isBusiness) {
+      // Business viewer: if business sent the last message, waiting on client
+      const isLastFromMe =
+        lastMsg.isMe ||
+        (lastMsg.senderEmail && conv.businessEmail && lastMsg.senderEmail.toLowerCase() === conv.businessEmail.toLowerCase());
+
+      if (conv.unreadCount > 0) {
+        return 'open';
+      }
+      return isLastFromMe ? 'waiting' : 'open';
+    } else {
+      // Client viewer: if client sent the last message, waiting on business
+      const isLastFromMe =
+        lastMsg.isMe ||
+        (lastMsg.senderEmail && conv.clientEmail && lastMsg.senderEmail.toLowerCase() === conv.clientEmail.toLowerCase());
+
+      if (conv.unreadCount > 0) {
+        return 'open';
+      }
+      return isLastFromMe ? 'waiting' : 'open';
+    }
+  };
+
+  // Compute live counts for each grouping tab
+  const counts = useMemo(() => {
+    let open = 0;
+    let waiting = 0;
+    let resolved = 0;
+
+    conversations.forEach((conv) => {
+      const cat = getConversationCategory(conv);
+      if (cat === 'open') open++;
+      else if (cat === 'waiting') waiting++;
+      else if (cat === 'resolved') resolved++;
+    });
+
+    return {
+      all: conversations.length,
+      open,
+      waiting,
+      resolved,
+    };
+  }, [conversations, isBusiness]);
+
+  // Filter conversations by active tab and search query
+  const filteredConversations = conversations.filter((conv) => {
+    if (activeTab !== 'all') {
+      const cat = getConversationCategory(conv);
+      if (cat !== activeTab) return false;
+    }
+
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase();
+      const matchName = conv.participant.name.toLowerCase().includes(query);
+      const matchEmail = conv.participant.email?.toLowerCase().includes(query);
+      const matchWorkspace = conv.workspaceInfo?.name?.toLowerCase().includes(query);
+      const matchLastMsg = conv.lastMessage?.toLowerCase().includes(query);
+      return matchName || matchEmail || matchWorkspace || matchLastMsg;
+    }
+
+    return true;
+  });
 
   return (
     <aside
       style={style}
-      className={`w-full flex-shrink-0 border-r border-gray-200 bg-white flex flex-col h-full select-none ${className}`}
+      className={`w-full flex-shrink-0 border-r border-gray-200/80 bg-[#fbfbfd] flex flex-col h-full select-none relative ${className}`}
     >
+      {/* Decorative Wave Background on the Sidebar Bottom */}
+      <div className="absolute inset-x-0 bottom-0 top-1/2 sidebar-wave-gradient pointer-events-none z-0 opacity-80" />
+
       {/* Top Header & Search Input */}
-      <div className="p-4 pb-3 border-b border-gray-100">
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="text-[13px] font-extrabold text-[#222222] tracking-wider uppercase">
+      <div className="p-3.5 sm:p-4 pb-3 border-b border-gray-100/90 space-y-3 relative z-10">
+        <div className="flex items-center justify-between">
+          <h2 className="text-[12px] font-bold text-gray-800 tracking-wider uppercase">
             Direct Messages
           </h2>
           {onOpenStartChat && (
@@ -59,29 +165,144 @@ export const DirectMessagesList: React.FC<DirectMessagesListProps> = ({
 
         {/* Search Bar */}
         <div className="relative flex items-center">
-          <Search
-            size={16}
-            className="absolute left-3.5 text-gray-400 pointer-events-none"
-          />
-          <input
-            type="text"
-            placeholder="Search"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full bg-[#f1f3f5] hover:bg-[#eaecee] focus:bg-white text-[13px] text-gray-800 placeholder-gray-400 rounded-lg pl-9 pr-4 py-2 border border-transparent focus:border-blue-400 focus:outline-none transition-all shadow-inner"
-          />
+          <div className="w-full flex items-center gap-2 bg-[#f0f1f5]/80 hover:bg-[#eaecee] focus-within:bg-white border border-gray-200/60 focus-within:border-indigo-400 rounded-lg px-3 py-1.5 transition-all shadow-2xs">
+            <Search size={14} className="text-gray-400 flex-shrink-0" />
+            <input
+              ref={searchInputRef}
+              type="text"
+              placeholder="Search conversations..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full bg-transparent text-xs text-gray-800 placeholder-gray-400 focus:outline-none min-w-0"
+            />
+            {searchQuery ? (
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                className="text-gray-400 hover:text-gray-600 p-0.5 rounded cursor-pointer"
+                title="Clear search"
+              >
+                <X size={13} />
+              </button>
+            ) : (
+              <span className="flex-shrink-0 text-[10px] font-medium text-gray-400 select-none tracking-tight">
+                ⌘ K
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Grouping Filter Pills matching screenshot */}
+        <div className="flex items-center gap-1.5 pt-0.5 overflow-x-auto no-scrollbar">
+          {/* All */}
+          <button
+            type="button"
+            onClick={() => setActiveTab('all')}
+            className={`flex items-center px-2.5 py-1 rounded-md text-xs font-semibold transition-all cursor-pointer flex-shrink-0 select-none ${
+              activeTab === 'all'
+                ? 'bg-[#5b52f9] text-white shadow-xs'
+                : 'bg-[#eeeff4] text-gray-700 hover:bg-gray-200/80'
+            }`}
+          >
+            <span>All</span>
+            {counts.all > 0 && (
+              <span
+                className={`ml-1.5 text-[10px] font-bold px-1.5 py-0.2 rounded leading-tight ${
+                  activeTab === 'all'
+                    ? 'bg-white/25 text-white'
+                    : 'bg-gray-200/90 text-gray-600'
+                }`}
+              >
+                {counts.all}
+              </span>
+            )}
+          </button>
+
+          {/* Open */}
+          <button
+            type="button"
+            onClick={() => setActiveTab('open')}
+            className={`flex items-center px-2.5 py-1 rounded-md text-xs font-semibold transition-all cursor-pointer flex-shrink-0 select-none ${
+              activeTab === 'open'
+                ? 'bg-[#5b52f9] text-white shadow-xs'
+                : 'bg-[#eeeff4] text-gray-700 hover:bg-gray-200/80'
+            }`}
+          >
+            <span>Open</span>
+            {counts.open > 0 && (
+              <span
+                className={`ml-1.5 text-[10px] font-bold px-1.5 py-0.2 rounded leading-tight ${
+                  activeTab === 'open'
+                    ? 'bg-white/25 text-white'
+                    : 'bg-gray-200/90 text-gray-600'
+                }`}
+              >
+                {counts.open}
+              </span>
+            )}
+          </button>
+
+          {/* Waiting */}
+          <button
+            type="button"
+            onClick={() => setActiveTab('waiting')}
+            className={`flex items-center px-2.5 py-1 rounded-md text-xs font-semibold transition-all cursor-pointer flex-shrink-0 select-none ${
+              activeTab === 'waiting'
+                ? 'bg-[#5b52f9] text-white shadow-xs'
+                : 'bg-[#eeeff4] text-gray-700 hover:bg-gray-200/80'
+            }`}
+          >
+            <span>Waiting</span>
+            {counts.waiting > 0 && (
+              <span
+                className={`ml-1.5 text-[10px] font-bold px-1.5 py-0.2 rounded leading-tight ${
+                  activeTab === 'waiting'
+                    ? 'bg-white/25 text-white'
+                    : 'bg-gray-200/90 text-gray-600'
+                }`}
+              >
+                {counts.waiting}
+              </span>
+            )}
+          </button>
+
+          {/* Resolved */}
+          <button
+            type="button"
+            onClick={() => setActiveTab('resolved')}
+            className={`flex items-center px-2.5 py-1 rounded-md text-xs font-semibold transition-all cursor-pointer flex-shrink-0 select-none ${
+              activeTab === 'resolved'
+                ? 'bg-[#5b52f9] text-white shadow-xs'
+                : 'bg-[#eeeff4] text-gray-700 hover:bg-gray-200/80'
+            }`}
+          >
+            <span>Resolved</span>
+            {counts.resolved > 0 && (
+              <span
+                className={`ml-1.5 text-[10px] font-bold px-1.5 py-0.2 rounded leading-tight ${
+                  activeTab === 'resolved'
+                    ? 'bg-white/25 text-white'
+                    : 'bg-gray-200/90 text-gray-600'
+                }`}
+              >
+                {counts.resolved}
+              </span>
+            )}
+          </button>
         </div>
       </div>
 
       {/* Conversations List */}
-      <div className="flex-1 overflow-y-auto divide-y divide-gray-50">
+      <div className="flex-1 overflow-y-auto px-2 py-2 space-y-1 relative z-10">
         {filteredConversations.length === 0 ? (
           <div className="p-8 text-center flex flex-col items-center justify-center h-52 text-gray-400">
             <MessageSquare size={28} className="text-gray-300 mb-2 stroke-[1.5]" />
-            <p className="text-xs font-bold text-gray-700">No conversations yet</p>
+            <p className="text-xs font-bold text-gray-700">No conversations found</p>
             <p className="text-[11px] text-gray-400 mt-1 max-w-[210px] leading-relaxed">
               {searchQuery
                 ? 'No conversations match your search.'
+                : activeTab !== 'all'
+                ? `No ${activeTab} conversations right now.`
                 : !isBusiness
                 ? 'Click "New" above to search for a business and start a conversation.'
                 : 'Waiting for clients to initiate conversations with your business.'}
@@ -96,23 +317,18 @@ export const DirectMessagesList: React.FC<DirectMessagesListProps> = ({
               <div
                 key={conv.id}
                 onClick={() => onSelectConversation(conv.id)}
-                className={`group relative flex items-start gap-3 px-4 py-3 cursor-pointer transition-colors ${
+                className={`group relative flex items-start gap-3 p-2.5 rounded-lg cursor-pointer transition-all ${
                   isActive
-                    ? 'bg-[#f4f6f8]'
-                    : 'hover:bg-gray-50/80 bg-white'
+                    ? 'bg-[#ebedf7]/90 shadow-2xs'
+                    : 'hover:bg-white/70'
                 }`}
               >
-                {/* Active Left Indicator Bar */}
-                {isActive && (
-                  <div className="absolute left-0 top-0 bottom-0 w-[3px] bg-[#0066ff]" />
-                )}
-
                 {/* Avatar */}
                 <div className="relative flex-shrink-0 mt-0.5">
                   <UserAvatar
                     src={conv.participant.avatar}
                     name={conv.participant.name}
-                    size={40}
+                    size={38}
                   />
                 </div>
 
@@ -120,7 +336,7 @@ export const DirectMessagesList: React.FC<DirectMessagesListProps> = ({
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between gap-1 mb-0.5">
                     <div className="flex items-center gap-1.5 min-w-0">
-                      <span className="text-[14px] font-bold text-gray-900 truncate">
+                      <span className="text-[13px] font-bold text-gray-900 truncate">
                         {conv.participant.name}
                       </span>
                       {isEnded && (
@@ -131,11 +347,11 @@ export const DirectMessagesList: React.FC<DirectMessagesListProps> = ({
                       )}
                     </div>
                     <div className="flex items-center gap-1">
-                      <span className="text-[11px] text-gray-400 flex-shrink-0 font-normal">
+                      <span className="text-[10px] text-gray-400 flex-shrink-0 font-normal">
                         {conv.lastMessageTime}
                       </span>
-                      {/* Delete this chat separately button (Business only) */}
-                      {isBusiness && onDeleteConversation && (
+                      {/* Clear this chat separately button (Business & Client) */}
+                      {onDeleteConversation && (
                         <button
                           type="button"
                           onClick={(e) => {
@@ -143,7 +359,7 @@ export const DirectMessagesList: React.FC<DirectMessagesListProps> = ({
                             onDeleteConversation(conv.id);
                           }}
                           className="opacity-0 group-hover:opacity-100 p-0.5 text-gray-400 hover:text-amber-700 hover:bg-amber-100/70 rounded transition-all cursor-pointer"
-                          title={`Delete chat with ${conv.participant.name}`}
+                          title={`Clear chat with ${conv.participant.name}`}
                         >
                           <Trash2 size={12} />
                         </button>
@@ -151,33 +367,69 @@ export const DirectMessagesList: React.FC<DirectMessagesListProps> = ({
                     </div>
                   </div>
 
-                  {!isEnded && (
-                    <div className="flex items-start justify-between gap-2">
-                      {conv.unreadCount > 0 ? (
-                        <>
-                          <p className="text-[12px] line-clamp-1 leading-relaxed text-gray-900 font-semibold">
-                            New Message
-                          </p>
-
-                          {/* Blinking Unread Indicator */}
-                          <span className="relative flex h-2.5 w-2.5 flex-shrink-0 mt-1">
-                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-500 opacity-75" />
-                            <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-blue-600" />
-                          </span>
-                        </>
-                      ) : (
-                        <p className="text-[12px] line-clamp-1 leading-relaxed text-gray-400 font-normal">
-                          {conv.workspaceInfo?.name || conv.bookingInfo?.serviceName || 'General Consultation'}
-                        </p>
-                      )}
-                    </div>
-                  )}
+                  <p className="text-[11px] line-clamp-1 leading-relaxed text-gray-400 font-normal">
+                    {conv.workspaceInfo?.name || conv.bookingInfo?.serviceName || 'Technical Architecture'}
+                  </p>
                 </div>
               </div>
             );
           })
         )}
       </div>
+
+      {/* Business Workspace Footer Bar (Bottom Left Sidebar for Business Users) */}
+      {isBusiness && (
+        <div className="border-t border-gray-200/70 bg-[#fafafc]/95 backdrop-blur-xs p-3 flex items-center justify-between gap-2 flex-shrink-0 relative z-10">
+          <div className="flex-1 min-w-0">
+            <h4 className="text-[12px] font-bold text-gray-900 truncate leading-tight">
+              {businessProfile?.name || "Sidharth Prabhu's Workspace"}
+            </h4>
+            <div className="flex items-center gap-1.5 mt-1">
+              {/* WSID Pill */}
+              <div className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-white border border-gray-200/90 rounded text-[10px] font-semibold text-gray-700 shadow-2xs">
+                <span>WSID: {businessProfile?.wsid || 'WS#ENOJEXBC#'}</span>
+                <ExternalLink size={9} className="text-gray-400" />
+                <button
+                  type="button"
+                  onClick={handleCopyWsid}
+                  className="ml-0.5 text-gray-400 hover:text-black transition-colors cursor-pointer"
+                  title={wsidCopied ? 'Copied!' : 'Copy WSID'}
+                >
+                  {wsidCopied ? (
+                    <Check size={10} className="text-green-600" />
+                  ) : (
+                    <Copy size={10} />
+                  )}
+                </button>
+              </div>
+
+              {/* Status Toggle Pill */}
+              <button
+                type="button"
+                onClick={handleToggleStatus}
+                className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-white border border-gray-200/90 rounded text-[10px] font-medium text-gray-700 shadow-2xs hover:bg-gray-50 transition-colors cursor-pointer"
+                title="Click to toggle status"
+              >
+                <span
+                  className={`w-1.5 h-1.5 rounded-full ${
+                    businessStatus === 'Closed' ? 'bg-[#ef4444]' : 'bg-[#22c55e]'
+                  }`}
+                />
+                <span>{businessStatus}</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Business Avatar Icon */}
+          <div className="relative flex-shrink-0">
+            <UserAvatar
+              src={businessProfile?.avatar}
+              name={businessProfile?.name || 'S'}
+              size={32}
+            />
+          </div>
+        </div>
+      )}
     </aside>
   );
 };

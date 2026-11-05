@@ -10,6 +10,7 @@ import { DetailsSidebar } from '@/components/DetailsSidebar';
 import { StartChatModal } from '@/components/chat/StartChatModal';
 import { EndChatModal } from '@/components/chat/EndChatModal';
 import { DeleteChatModal } from '@/components/chat/DeleteChatModal';
+import { ReopenPromptModal } from '@/components/chat/ReopenPromptModal';
 import { useAuth } from '@/context/AuthContext';
 import { chatService } from '@/lib/chatService';
 import { BUSINESS_EMAIL } from '@/lib/constants';
@@ -39,6 +40,19 @@ export default function Home() {
   const [isEndModalOpen, setIsEndModalOpen] = useState(false);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [deletingConversationId, setDeletingConversationId] = useState<string | null>(null);
+  const [reopenPromptState, setReopenPromptState] = useState<{
+    isOpen: boolean;
+    conversationId: string;
+    businessName: string;
+    categoryName: string;
+    isSubmitting: boolean;
+  }>({
+    isOpen: false,
+    conversationId: '',
+    businessName: '',
+    categoryName: '',
+    isSubmitting: false,
+  });
 
   // Panel widths
   const DEFAULT_DETAILS_WIDTH = 300;
@@ -123,10 +137,10 @@ export default function Home() {
     window.addEventListener('touchend', onEnd);
   };
 
-  // Active conversation object
+  // Active conversation object (null by default if none explicitly selected)
   const activeConversation = activeConversationId
-    ? conversations.find((c) => c.id === activeConversationId) || conversations[0]
-    : conversations[0];
+    ? conversations.find((c) => c.id === activeConversationId) || null
+    : null;
 
   // Dynamic viewer email: When business switches to Client View, simulate the client's perspective
   const effectiveViewerEmail =
@@ -182,16 +196,12 @@ export default function Home() {
       }
       prevUnreadMapRef.current = currentMap;
 
-      // Auto-select conversation if none selected or if active one was removed
+      // Only maintain active conversation if it already exists in the list; do NOT auto-select
       setActiveConversationId((prevId) => {
         if (prevId && updatedList.some((c) => c.id === prevId)) {
           return prevId;
         }
-        // If on small screen / mobile and user hasn't selected a chat, keep list view
-        if (typeof window !== 'undefined' && window.innerWidth < 768 && prevId === '') {
-          return '';
-        }
-        return updatedList[0]?.id || '';
+        return '';
       });
     });
 
@@ -405,23 +415,96 @@ export default function Home() {
     }
   };
 
-  // Delete Chat (Business only - clears business conversation history; connection and client view remain active)
+  // Clear Chat (Clears conversation history on viewer's side for both Client and Business)
   const handleDeleteChat = async (conversationId: string) => {
-    if (!user?.email || !isBusiness) return;
+    const viewerEmail = effectiveViewerEmail || user?.email;
+    if (!viewerEmail) return;
+
+    // Optimistically clear the conversation messages immediately in 0ms
+    setConversations((prev) =>
+      prev.map((c) => {
+        if (c.id === conversationId) {
+          return {
+            ...c,
+            messages: [],
+            lastMessage: 'Conversation history cleared on your side',
+          };
+        }
+        return c;
+      })
+    );
+
     try {
-      await chatService.deleteChat(conversationId, user.email);
+      await chatService.deleteChat(conversationId, viewerEmail);
     } catch (err) {
-      console.error('Delete chat error:', err);
+      console.error('Clear chat error:', err);
+      if (effectiveViewerEmail) {
+        chatService.fetchConversations(effectiveViewerEmail).then(setConversations);
+      }
     }
   };
 
-  // Delete individual message (Business only - clears message from business view)
+  // Delete individual message (Allowed within 15 mins for messages sent by the user)
   const handleDeleteMessage = async (messageId: string) => {
-    if (!activeConversation || !user?.email || !isBusiness) return;
+    if (!activeConversation || !user?.email) return;
+    const convId = activeConversation.id;
+    // Optimistic UI update: instantly remove message from current view in 0ms
+    setConversations((prev) =>
+      prev.map((c) => {
+        if (c.id === convId) {
+          const updatedMsgs = c.messages.filter((m) => m.id !== messageId);
+          const lastMsg = updatedMsgs[updatedMsgs.length - 1];
+          return {
+            ...c,
+            messages: updatedMsgs,
+            lastMessage: lastMsg ? (lastMsg.content || (lastMsg.attachment ? `[${lastMsg.attachment.type.toUpperCase()}]` : '')) : '',
+            lastMessageTime: lastMsg ? lastMsg.timestamp : '',
+          };
+        }
+        return c;
+      })
+    );
     try {
-      await chatService.deleteMessage(activeConversation.id, messageId, user.email);
+      await chatService.deleteMessage(convId, messageId, user.email);
     } catch (err) {
       console.error('Delete message error:', err);
+      if (effectiveViewerEmail) {
+        chatService.fetchConversations(effectiveViewerEmail).then(setConversations);
+      }
+    }
+  };
+
+  // Edit individual message (Allowed within 10 minutes for messages sent by the user)
+  const handleEditMessage = async (messageId: string, newContent: string) => {
+    if (!activeConversation || !user?.email) return;
+    const convId = activeConversation.id;
+    // Optimistic UI update: instantly reflect edited content in 0ms
+    setConversations((prev) =>
+      prev.map((c) => {
+        if (c.id === convId) {
+          const updatedMsgs = c.messages.map((m) =>
+            m.id === messageId
+              ? { ...m, content: newContent, isEdited: true, editedAt: Date.now() }
+              : m
+          );
+          const lastMsg = updatedMsgs[updatedMsgs.length - 1];
+          return {
+            ...c,
+            messages: updatedMsgs,
+            lastMessage: lastMsg ? (lastMsg.content || (lastMsg.attachment ? `[${lastMsg.attachment.type.toUpperCase()}]` : '')) : '',
+          };
+        }
+        return c;
+      })
+    );
+    try {
+      await chatService.editMessage(convId, messageId, newContent, user.email);
+    } catch (err) {
+      console.error('Edit message error:', err);
+      if (effectiveViewerEmail) {
+        chatService.fetchConversations(effectiveViewerEmail).then(setConversations);
+      }
+      throw err;
     }
   };
 
@@ -436,10 +519,10 @@ export default function Home() {
   };
 
   // Re-open Chat (Clients only - allows clients to re-enable an ended session)
-  const handleReopenChat = async (conversationId: string) => {
+  const handleReopenChat = async (conversationId: string, workspaceName?: string) => {
     if (!user?.email || isBusiness) return;
     try {
-      await chatService.reopenChat(conversationId, user.email);
+      await chatService.reopenChat(conversationId, user.email, workspaceName);
     } catch (err) {
       console.error('Reopen chat error:', err);
     }
@@ -461,11 +544,32 @@ export default function Home() {
         ? (activeConversation?.clientEmail || conversations[0]?.clientEmail || user.email)
         : user.email;
 
+    const normTargetEmail = data.businessEmail.trim().toLowerCase();
+
+    // Check if an existing ended conversation already exists with this business
+    const existingEndedConv = conversations.find(
+      (c) =>
+        (c.businessEmail || '').toLowerCase() === normTargetEmail &&
+        c.status === 'ended'
+    );
+
+    if (existingEndedConv && !isBusiness) {
+      // Pop up the confirmation modal asking whether to reopen the chat session and update the category
+      setReopenPromptState({
+        isOpen: true,
+        conversationId: existingEndedConv.id,
+        businessName: data.businessName || existingEndedConv.businessName || 'Business',
+        categoryName: data.workspaceName || 'General Consultation',
+        isSubmitting: false,
+      });
+      return;
+    }
+
     const created = await chatService.initiateChat({
       clientEmail,
       clientName: currentClientUser.name,
       clientAvatar: currentClientUser.avatar,
-      businessEmail: data.businessEmail.trim().toLowerCase(),
+      businessEmail: normTargetEmail,
       businessName: data.businessName,
       businessAvatar: data.businessAvatar || '',
       workspaceName: data.workspaceName || 'General Consultation',
@@ -509,7 +613,10 @@ export default function Home() {
             activeNavTab={activeNavTab}
             onNavTabChange={setActiveNavTab}
             notifications={notificationsList}
-            onSelectNotification={handleSelectConversation}
+            onSelectNotification={() => {
+              // Notification click only dismisses notification without opening chat directly
+              setActiveConversationId('');
+            }}
             onClearNotifications={handleClearAllNotifications}
           />
         ) : (
@@ -517,7 +624,10 @@ export default function Home() {
             business={currentBusinessUser}
             unreadCount={notificationsList.length}
             notifications={notificationsList}
-            onSelectNotification={handleSelectConversation}
+            onSelectNotification={() => {
+              // Notification click only dismisses notification without opening chat directly
+              setActiveConversationId('');
+            }}
             onClearNotifications={handleClearAllNotifications}
           />
         )}
@@ -531,15 +641,12 @@ export default function Home() {
           activeConversationId={activeConversationId}
           onSelectConversation={handleSelectConversation}
           isBusiness={isBusiness}
+          businessProfile={isBusiness ? currentBusinessUser : undefined}
           onOpenStartChat={!isBusiness || activeViewMode === 'client' ? () => setIsStartChatModalOpen(true) : undefined}
-          onDeleteConversation={
-            isBusiness
-              ? (id) => {
-                  setDeletingConversationId(id);
-                  setIsDeleteModalOpen(true);
-                }
-              : undefined
-          }
+          onDeleteConversation={(id) => {
+            setDeletingConversationId(id);
+            setIsDeleteModalOpen(true);
+          }}
           className={`${activeConversationId ? 'hidden md:flex' : 'flex'} w-full md:w-[320px] lg:w-[380px] xl:w-[420px] 2xl:w-[440px] flex-shrink-0`}
         />
 
@@ -549,10 +656,11 @@ export default function Home() {
             conversation={activeConversation}
             currentUserEmail={effectiveViewerEmail}
             onSendMessage={handleSendMessage}
-            onDeleteChat={isBusiness ? handleDeleteChat : undefined}
+            onDeleteChat={handleDeleteChat}
             onEndChat={!isBusiness ? handleEndChat : undefined}
             onReopenChat={!isBusiness ? handleReopenChat : undefined}
-            onDeleteMessage={isBusiness ? handleDeleteMessage : undefined}
+            onDeleteMessage={handleDeleteMessage}
+            onEditMessage={handleEditMessage}
             onBackToList={() => setActiveConversationId('')}
             onToggleDetails={() => setShowDetailsSidebar((prev) => !prev)}
             isDetailsOpen={showDetailsSidebar}
@@ -576,7 +684,7 @@ export default function Home() {
             </div>
 
             <h3 className="text-sm font-semibold text-gray-700 mt-1">
-              Select a conversation to begin
+              Open a conversation to begin
             </h3>
             <p className="text-xs text-gray-400 max-w-sm mt-1 mb-5 leading-relaxed">
               Choose an existing chat from the sidebar or initiate a new inquiry.
@@ -643,7 +751,7 @@ export default function Home() {
                 conversation={activeConversation}
                 isBusiness={isBusiness}
                 onEndChat={!isBusiness ? () => setIsEndModalOpen(true) : undefined}
-                onDeleteChat={isBusiness ? () => setIsDeleteModalOpen(true) : undefined}
+                onDeleteChat={() => setIsDeleteModalOpen(true)}
                 onClose={() => setShowDetailsSidebar(false)}
                 style={{ width: `${detailsWidth}px` }}
               />
@@ -662,7 +770,7 @@ export default function Home() {
                   conversation={activeConversation}
                   isBusiness={isBusiness}
                   onEndChat={!isBusiness ? () => setIsEndModalOpen(true) : undefined}
-                  onDeleteChat={isBusiness ? () => setIsDeleteModalOpen(true) : undefined}
+                  onDeleteChat={() => setIsDeleteModalOpen(true)}
                   onClose={() => setShowDetailsSidebar(false)}
                 />
               </div>
@@ -677,7 +785,7 @@ export default function Home() {
           senderName={activeToast.senderName}
           count={activeToast.count}
           onOpen={() => {
-            handleSelectConversation(activeToast.conversationId);
+            // Dismiss toast without directly opening chat
             setActiveToast(null);
           }}
           onDismiss={() => setActiveToast(null)}
@@ -704,8 +812,45 @@ export default function Home() {
         />
       )}
 
-      {/* Delete Chat Modal (Business Only - via List, Header or Sidebar) */}
-      {isBusiness && (deletingConversationId || activeConversation) && (
+      {/* Re-open Prompt Modal when initiating with an already spoken business */}
+      <ReopenPromptModal
+        isOpen={reopenPromptState.isOpen}
+        businessName={reopenPromptState.businessName}
+        categoryName={reopenPromptState.categoryName}
+        isSubmitting={reopenPromptState.isSubmitting}
+        onConfirm={async () => {
+          setReopenPromptState((prev) => ({ ...prev, isSubmitting: true }));
+          try {
+            await handleReopenChat(
+              reopenPromptState.conversationId,
+              reopenPromptState.categoryName
+            );
+            setActiveConversationId(reopenPromptState.conversationId);
+            setReopenPromptState({
+              isOpen: false,
+              conversationId: '',
+              businessName: '',
+              categoryName: '',
+              isSubmitting: false,
+            });
+          } catch (err) {
+            console.error('Failed to reopen and update conversation category:', err);
+            setReopenPromptState((prev) => ({ ...prev, isSubmitting: false }));
+          }
+        }}
+        onCancel={() => {
+          setReopenPromptState({
+            isOpen: false,
+            conversationId: '',
+            businessName: '',
+            categoryName: '',
+            isSubmitting: false,
+          });
+        }}
+      />
+
+      {/* Clear Chat Modal (Available via List, Header or Sidebar) */}
+      {(deletingConversationId || activeConversation) && (
         <DeleteChatModal
           isOpen={isDeleteModalOpen}
           onClose={() => {
@@ -723,7 +868,7 @@ export default function Home() {
           clientName={
             conversations.find((c) => c.id === deletingConversationId)?.participant.name ||
             activeConversation?.participant.name ||
-            'Client'
+            'Participant'
           }
         />
       )}

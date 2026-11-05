@@ -4,7 +4,7 @@ import { serverChatStore } from '@/lib/serverChatStore';
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { conversationId, userEmail } = body;
+    const { conversationId, userEmail, workspaceName } = body;
 
     if (!userEmail) {
       return NextResponse.json(
@@ -20,7 +20,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const updated = serverChatStore.reopenChat(conversationId, userEmail);
+    const updated = serverChatStore.reopenChat(conversationId, userEmail, workspaceName);
 
     return NextResponse.json({
       success: true,

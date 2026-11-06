@@ -1,28 +1,33 @@
 {
-  "name": "open-purpl",
-  "version": "0.1.0",
+  "name": "orqland-chat-monorepo",
+  "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
-    "lint": "eslint"
-  },
-  "dependencies": {
-    "firebase": "^13.1.0",
-    "lucide-react": "^1.61.0",
-    "next": "16.4.3",
-    "react": "19.3.0",
-    "react-dom": "19.3.0"
+    "build": "pnpm --filter @orqland/contracts build && pnpm --filter @orqland/api build && pnpm --filter @orqland/web build",
+    "build:backend": "pnpm --filter @orqland/api build",
+    "build:frontend": "pnpm --filter @orqland/web build",
+    "dev": "pnpm --parallel --filter @orqland/api --filter @orqland/web dev",
+    "dev:backend": "pnpm --filter @orqland/api start:dev",
+    "dev:frontend": "pnpm --filter @orqland/web dev",
+    "dev:web": "pnpm --filter @orqland/web dev",
+    "dev:api": "pnpm --filter @orqland/api start:dev",
+    "test": "pnpm --filter @orqland/api test",
+    "test:backend": "pnpm --filter @orqland/api test",
+    "test:e2e": "pnpm --filter @orqland/api test:e2e",
+    "lint": "pnpm --recursive run lint",
+    "db:generate": "pnpm --filter @orqland/api db:generate",
+    "db:migrate": "pnpm --filter @orqland/api db:migrate",
+    "db:seed": "pnpm --filter @orqland/api db:seed"
   },
   "devDependencies": {
-    "@tailwindcss/turbopack": "^4",
-    "@types/node": "^20",
-    "@types/react": "^19",
-    "@types/react-dom": "^19",
-    "eslint": "^9",
-    "eslint-config-next": "16.4.3",
-    "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5.7.3"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@firebase/util",
+      "esbuild",
+      "protobufjs",
+      "@nestjs/core"
+    ]
   }
 }

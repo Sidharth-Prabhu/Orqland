@@ -1,0 +1,24 @@
+export declare enum ChatErrorCode {
+    UNAUTHORIZED = "UNAUTHORIZED",
+    FORBIDDEN = "FORBIDDEN",
+    CONVERSATION_NOT_FOUND = "CONVERSATION_NOT_FOUND",
+    CONVERSATION_ENDED = "CONVERSATION_ENDED",
+    MESSAGE_NOT_FOUND = "MESSAGE_NOT_FOUND",
+    MESSAGE_DELETE_EXPIRED = "MESSAGE_DELETE_EXPIRED",
+    MESSAGE_EDIT_EXPIRED = "MESSAGE_EDIT_EXPIRED",
+    RATE_LIMIT_EXCEEDED = "RATE_LIMIT_EXCEEDED",
+    INVALID_ATTACHMENT = "INVALID_ATTACHMENT",
+    SENSITIVE_CONTENT_BLOCKED = "SENSITIVE_CONTENT_BLOCKED",
+    DUPLICATE_IDEMPOTENCY_KEY = "DUPLICATE_IDEMPOTENCY_KEY",
+    ROOM_ACCESS_DENIED = "ROOM_ACCESS_DENIED",
+    INTERNAL_ERROR = "INTERNAL_ERROR"
+}
+export interface ChatErrorResponse {
+    statusCode: number;
+    error: string;
+    errorCode: ChatErrorCode;
+    message: string;
+    details?: Record<string, unknown>;
+    timestamp: string;
+}
+//# sourceMappingURL=errors.d.ts.map

@@ -4,6 +4,8 @@ import {
   NotFoundException,
   ForbiddenException,
   BadRequestException,
+  Inject,
+  forwardRef,
 } from '@nestjs/common';
 import { DatabaseService } from '../../infrastructure/database/database.service';
 import {
@@ -43,6 +45,7 @@ export class MessagesService {
 
   constructor(
     private readonly dbService: DatabaseService,
+    @Inject(forwardRef(() => ConversationsService))
     private readonly conversationsService: ConversationsService
   ) {
     this.seedDevMessages();
@@ -297,7 +300,7 @@ export class MessagesService {
       senderEmail: user.email,
       senderName: user.name,
       senderAvatar: user.avatar,
-      content: dto.content || (incomingAttachments.length > 0 ? (incomingAttachments[0].type === 'image' ? 'Sent an image' : 'Sent an attachment') : ''),
+      content: dto.content || '',
       timestamp: timeString,
       date: 'Today',
       createdAt: now,
@@ -378,6 +381,15 @@ export class MessagesService {
     if (dto.idempotencyKey) {
       this.idempotencyCache.set(dto.idempotencyKey, createdMsg);
     }
+
+    // Update the conversation's last message, timestamp, and unread counters in in-memory mode
+    this.conversationsService.updateInMemoryConversationLastMessage(
+      dto.conversationId,
+      createdMsg.content,
+      now,
+      timeString,
+      user.role === 'business'
+    );
 
     return createdMsg;
   }
@@ -548,5 +560,32 @@ export class MessagesService {
     msg.content = 'This message was deleted';
     msg.deletedForEveryone = true;
     return msg;
+  }
+
+  /**
+   * Helper for ConversationsService to get in-memory messages for a conversation
+   */
+  getInMemoryMessagesForConversation(conversationId: string, limit = 50): ChatMessage[] {
+    const list = this.inMemoryMessages
+      .filter((m) => m.conversationId === conversationId)
+      .sort((a, b) => a.createdAt - b.createdAt);
+    return list.slice(Math.max(0, list.length - limit));
+  }
+
+  /**
+   * Mark all unread messages in a conversation as read by the reader
+   */
+  markMessagesAsRead(conversationId: string, readerUserId: string, readerEmail?: string) {
+    const normReaderEmail = readerEmail?.toLowerCase().trim();
+    for (const msg of this.inMemoryMessages) {
+      if (msg.conversationId === conversationId) {
+        const isFromOther =
+          msg.senderId !== readerUserId &&
+          (!normReaderEmail || msg.senderEmail?.toLowerCase().trim() !== normReaderEmail);
+        if (isFromOther) {
+          msg.status = 'read';
+        }
+      }
+    }
   }
 }

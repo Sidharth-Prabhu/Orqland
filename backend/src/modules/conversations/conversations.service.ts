@@ -4,6 +4,9 @@ import {
   NotFoundException,
   ForbiddenException,
   BadRequestException,
+  Inject,
+  Optional,
+  forwardRef,
 } from '@nestjs/common';
 import { DatabaseService } from '../../infrastructure/database/database.service';
 import {
@@ -14,6 +17,7 @@ import {
 } from '../../infrastructure/database/schema';
 import { InternalUser, AuthService } from '../auth/auth.service';
 import { PresenceService } from '../presence/presence.service';
+import { MessagesService } from '../messages/messages.service';
 import {
   Conversation,
   InitiateConversationDto,
@@ -32,7 +36,10 @@ export class ConversationsService {
   constructor(
     private readonly dbService: DatabaseService,
     private readonly authService: AuthService,
-    private readonly presenceService: PresenceService
+    private readonly presenceService: PresenceService,
+    @Optional()
+    @Inject(forwardRef(() => MessagesService))
+    private readonly messagesService?: MessagesService
   ) {
     this.seedDevConversations();
   }
@@ -113,6 +120,7 @@ export class ConversationsService {
 
           const clientUser = isBiz ? otherUser : user;
           const bizUser = isBiz ? user : otherUser;
+          const convMessages = this.messagesService?.getInMemoryMessagesForConversation(c.id) || [];
 
           result.push({
             id: c.id,
@@ -157,7 +165,7 @@ export class ConversationsService {
                   status: c.bookingStatus || 'Active',
                 }
               : undefined,
-            messages: [],
+            messages: convMessages,
           });
         }
 
@@ -186,13 +194,31 @@ export class ConversationsService {
           );
         })
         .map(async (c) => {
-          const isOnline = await this.presenceService.isOnline(c.participant.email || c.participant.id);
+          const isOtherBiz = !isBiz;
+          const otherEmail = isBiz ? c.clientEmail : c.businessEmail;
+          const otherId = isBiz ? c.clientId : c.businessId;
+          const otherName = isBiz ? c.clientName : c.businessName;
+          const otherAvatar = isBiz ? c.clientAvatar : c.businessAvatar;
+
+          const isOnline = await this.presenceService.isOnline(otherEmail || otherId);
+          const convMessages = this.messagesService?.getInMemoryMessagesForConversation(c.id) || [];
+          const unreadCount = isBiz ? (c.unreadByBusiness || 0) : (c.unreadByClient || 0);
+
           return {
             ...c,
+            unreadCount,
+            unreadByClient: c.unreadByClient ?? 0,
+            unreadByBusiness: c.unreadByBusiness ?? 0,
             participant: {
-              ...c.participant,
+              id: otherId,
+              name: otherName || (isBiz ? 'Client' : 'Business'),
+              email: otherEmail,
+              avatar: otherAvatar || '',
+              handle: otherEmail ? `@${otherEmail.split('@')[0]}` : '@user',
               isOnline,
+              role: isOtherBiz ? 'business' : 'client',
             },
+            messages: convMessages,
           };
         })
     );
@@ -287,6 +313,30 @@ export class ConversationsService {
     }
 
     // In-memory fallback
+    // ENFORCE SINGLE SESSION PER CLIENT-BUSINESS PAIR:
+    // Check if a conversation already exists between this client and business
+    const existingMemory = this.inMemoryConversations.find(
+      (c) =>
+        (c.clientId === clientUser.id || c.clientEmail.toLowerCase() === clientUser.email.toLowerCase()) &&
+        (c.businessId === targetBusiness.id || c.businessEmail.toLowerCase() === bizEmail)
+    );
+
+    if (existingMemory) {
+      if (dto.workspaceName) {
+        existingMemory.workspaceInfo = {
+          ...existingMemory.workspaceInfo,
+          name: dto.workspaceName,
+        };
+      }
+      if (dto.initialMessage) {
+        existingMemory.lastMessage = dto.initialMessage;
+        existingMemory.lastMessageTime = timeString;
+        existingMemory.lastMessageTimestamp = now;
+        existingMemory.unreadByBusiness = (existingMemory.unreadByBusiness || 0) + 1;
+      }
+      return this.getConversation(existingMemory.id, clientUser);
+    }
+
     const newId = crypto.randomUUID();
     const newConv: Conversation = {
       id: newId,
@@ -484,6 +534,17 @@ export class ConversationsService {
               : { unreadByClient: 0, updatedAt: new Date() }
           )
           .where(eq(conversations.id, conversationId));
+
+        // Also update message delivery status in database to 'read' for messages from the other user
+        await db
+          .update(messages)
+          .set({ status: 'read' })
+          .where(
+            and(
+              eq(messages.conversationId, conversationId),
+              sql`${messages.senderId} != ${user.id}`
+            )
+          );
         return;
       } catch (err) {
         this.logger.error('Failed to mark conversation as read in DB:', err);
@@ -500,5 +561,30 @@ export class ConversationsService {
       }
       conv.unreadCount = 0;
     }
+    this.messagesService?.markMessagesAsRead(conversationId, user.id, user.email);
+  }
+
+  /**
+   * Helper method for MessagesService to update the conversation summary in memory
+   */
+  updateInMemoryConversationLastMessage(
+    conversationId: string,
+    lastMessage: string,
+    timestamp: number,
+    timeString: string,
+    sentByBusiness: boolean
+  ) {
+    const conv = this.inMemoryConversations.find((c) => c.id === conversationId);
+    if (conv) {
+      conv.lastMessage = lastMessage;
+      conv.lastMessageTime = timeString;
+      conv.lastMessageTimestamp = timestamp;
+      if (sentByBusiness) {
+        conv.unreadByClient = (conv.unreadByClient || 0) + 1;
+      } else {
+        conv.unreadByBusiness = (conv.unreadByBusiness || 0) + 1;
+      }
+    }
   }
 }
+

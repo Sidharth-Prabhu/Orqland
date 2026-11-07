@@ -64,7 +64,7 @@ export function useChatMutations() {
         senderEmail: user?.email || '',
         senderName: user?.displayName || user?.email?.split('@')[0] || 'User',
         senderAvatar: user?.photoURL || '',
-        content: dto.content || (dto.attachments?.length ? 'Sent an attachment' : ''),
+        content: dto.content || '',
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         date: 'Today',
         createdAt: now,

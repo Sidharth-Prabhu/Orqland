@@ -39,18 +39,40 @@ export async function proxyToNest(
       headers['x-user-email'] = emailHeader;
     }
 
+    // In dev mode, also check searchParams for email if no auth/email header is present
+    if (!headers['x-user-email'] && !headers['authorization']) {
+      const emailQuery = request.nextUrl.searchParams.get('email') || request.nextUrl.searchParams.get('senderEmail');
+      if (emailQuery) {
+        headers['x-user-email'] = emailQuery;
+      }
+    }
+
     const method = options?.method || request.method;
-    const body =
-      options?.body !== undefined
-        ? JSON.stringify(options.body)
-        : method !== 'GET' && method !== 'HEAD'
-        ? await request.text().catch(() => undefined)
-        : undefined;
+    let bodyText: string | undefined = undefined;
+
+    if (options?.body !== undefined) {
+      bodyText = JSON.stringify(options.body);
+    } else if (method !== 'GET' && method !== 'HEAD') {
+      bodyText = await request.text().catch(() => undefined);
+    }
+
+    // If in dev and no auth header, try to extract email from body to provide dev identity fallback
+    if (!headers['authorization'] && !headers['x-user-email'] && bodyText) {
+      try {
+        const parsed = JSON.parse(bodyText);
+        const devEmail = parsed.clientEmail || parsed.userEmail || parsed.senderEmail || parsed.email;
+        if (devEmail) {
+          headers['x-user-email'] = devEmail;
+        }
+      } catch {
+        // ignore parse error
+      }
+    }
 
     const res = await fetch(url.toString(), {
       method,
       headers,
-      body: body && body.length > 0 ? body : undefined,
+      body: bodyText && bodyText.length > 0 ? bodyText : undefined,
       cache: 'no-store',
     });
 

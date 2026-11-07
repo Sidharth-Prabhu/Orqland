@@ -5,6 +5,7 @@ import { RedisIoAdapter } from './infrastructure/redis/redis-io.adapter';
 import { RedisService } from './infrastructure/redis/redis.service';
 import { GlobalExceptionFilter } from './common/filters/global-exception.filter';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
+import * as bodyParser from 'body-parser';
 
 async function bootstrap() {
   const logger = new Logger('Bootstrap');
@@ -17,9 +18,13 @@ async function bootstrap() {
       ],
       credentials: true,
       methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-      allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
+      allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'X-User-Email'],
     },
   });
+
+  // Support up to 50mb payloads for base64 / inline images and documents
+  app.use(bodyParser.json({ limit: '50mb' }));
+  app.use(bodyParser.urlencoded({ limit: '50mb', extended: true }));
 
   // REST API prefix
   app.setGlobalPrefix('api/v1');

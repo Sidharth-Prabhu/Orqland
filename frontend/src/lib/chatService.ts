@@ -1,8 +1,34 @@
 import { Conversation, ChatMessage, ChatAttachment } from '@/types/chat';
+import { auth } from './firebase';
 
 const CHANNEL_NAME = 'orqland_chat_channel';
 const STORAGE_PREFIX = 'orqland_cache_v4_';
 const TAB_ID = typeof window !== 'undefined' ? Math.random().toString(36).slice(2, 10) : 'server';
+
+async function getAuthHeaders(userEmail?: string): Promise<Record<string, string>> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+  try {
+    const currentUser = auth.currentUser;
+    if (currentUser) {
+      const token = await currentUser.getIdToken().catch(() => '');
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+      if (currentUser.email) {
+        headers['X-User-Email'] = currentUser.email;
+      }
+    } else if (userEmail) {
+      headers['X-User-Email'] = userEmail;
+    }
+  } catch {
+    if (userEmail) {
+      headers['X-User-Email'] = userEmail;
+    }
+  }
+  return headers;
+}
 
 // In-memory cache per user email for instantaneous 0ms access
 const inMemoryCache: Record<string, Conversation[]> = {};
@@ -197,14 +223,22 @@ export const chatService = {
     if (!userEmail) return [];
     const email = userEmail.trim().toLowerCase();
     try {
+      const authHeaders = await getAuthHeaders(email);
       const res = await fetch(`/api/chat/list?email=${encodeURIComponent(email)}`, {
+        headers: authHeaders,
         cache: 'no-store',
       });
       if (!res.ok) return loadCachedConversations(email);
       const data = await res.json();
-      if (Array.isArray(data.conversations)) {
-        saveCachedConversations(data.conversations, email);
-        return data.conversations;
+      const list = Array.isArray(data.data)
+        ? data.data
+        : Array.isArray(data.conversations)
+        ? data.conversations
+        : null;
+
+      if (list) {
+        saveCachedConversations(list, email);
+        return list;
       }
       return loadCachedConversations(email);
     } catch (err) {
@@ -227,9 +261,10 @@ export const chatService = {
     workspaceName?: string;
     initialMessage?: string;
   }): Promise<Conversation> {
+    const authHeaders = await getAuthHeaders(params.clientEmail);
     const res = await fetch('/api/chat/initiate', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders,
       body: JSON.stringify(params),
     });
 
@@ -238,7 +273,7 @@ export const chatService = {
       throw new Error(data.error || 'Failed to initiate conversation.');
     }
 
-    const createdConv: Conversation = data.conversation;
+    const createdConv: Conversation = data.conversation || data.data;
 
     // Optimistically update cache
     const current = loadCachedConversations(params.clientEmail).filter((c) => c.id !== createdConv.id);
@@ -303,9 +338,10 @@ export const chatService = {
     }
 
     // Call server API
+    const authHeaders = await getAuthHeaders(senderEmail);
     const res = await fetch('/api/chat/send', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders,
       body: JSON.stringify(params),
     });
 
@@ -324,13 +360,14 @@ export const chatService = {
     }
 
     // Replace with confirmed server conversation and message
-    const updatedConv: Conversation = data.conversation;
+    const updatedConv: Conversation = data.conversation || data.data?.conversation || data.data;
+    const confirmedMsg: ChatMessage = data.message || data.data?.message || optimisticMessage;
     const latest = loadCachedConversations(senderEmail).map((c) =>
       c.id === updatedConv.id ? updatedConv : c
     );
     saveCachedConversations(latest, senderEmail);
 
-    return { message: data.message, conversation: updatedConv };
+    return { message: confirmedMsg, conversation: updatedConv };
   },
 
   /**
@@ -477,16 +514,22 @@ export const chatService = {
     // Optimistically zero unread count
     const current = loadCachedConversations(readerEmail);
     const idx = current.findIndex((c) => c.id === conversationId);
-    if (idx >= 0 && current[idx].unreadCount > 0) {
-      current[idx].unreadCount = 0;
-      saveCachedConversations(current, readerEmail);
-      notifyCrossTab();
+    if (idx >= 0) {
+      const conv = current[idx];
+      if ((conv.unreadCount || 0) > 0 || (conv.unreadByClient || 0) > 0 || (conv.unreadByBusiness || 0) > 0) {
+        conv.unreadCount = 0;
+        conv.unreadByClient = 0;
+        conv.unreadByBusiness = 0;
+        saveCachedConversations(current, readerEmail);
+        notifyCrossTab();
+      }
     }
 
     try {
+      const authHeaders = await getAuthHeaders(readerEmail);
       await fetch('/api/chat/read', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders,
         body: JSON.stringify({ conversationId, readerEmail }),
       });
     } catch {

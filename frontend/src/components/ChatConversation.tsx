@@ -1006,7 +1006,10 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
                       {/* Message Body */}
                       {(() => {
                         const isLocation = msg.attachment?.type === 'location';
-                        const isAutoLocationText = msg.content === 'Shared location coordinates';
+                        const isAutoLocationText =
+                          msg.content === 'Shared location coordinates' ||
+                          msg.content === 'Sent an image' ||
+                          msg.content === 'Sent an attachment';
                         const displayContent = isAutoLocationText ? null : msg.content;
                         const hasMediaOnly = !displayContent && ((msg.attachments && msg.attachments.length > 0) || msg.attachment);
                         const isEditingThis = editingMessageId === msg.id;
@@ -1107,7 +1110,7 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
                                                 size: att.size,
                                               })
                                             }
-                                            className={`relative w-full ${isThreeOrMore ? 'h-28 sm:h-32' : 'h-32 sm:h-36'} rounded-md overflow-hidden bg-white text-gray-900 border border-gray-200 shadow-xs cursor-pointer group/pdf hover:border-blue-500 hover:ring-2 hover:ring-blue-100 transition-all flex flex-col`}
+                                            className={`relative w-full ${isThreeOrMore ? 'h-28 sm:h-32' : 'h-32 sm:h-36'} rounded-md overflow-hidden bg-white text-gray-900 border border-gray-200 shadow-2xs cursor-pointer group/pdf hover:border-gray-300 transition-all flex flex-col`}
                                             title="Click to view PDF document"
                                           >
                                             {/* PDF visual preview area with first-page render */}
@@ -1202,7 +1205,7 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
                                             });
                                           }
                                         }}
-                                        className={`rounded-lg overflow-hidden relative max-w-sm max-h-60 bg-white border border-black/10 shadow-[0_1px_2px_rgba(0,0,0,0.06)] cursor-pointer group/img transition-all hover:border-black/25 ${isMe ? 'ml-auto' : ''}`}
+                                        className={`rounded-lg overflow-hidden relative max-w-sm max-h-60 bg-white border border-gray-200 shadow-2xs cursor-pointer group/img transition-all hover:border-gray-300 ${isMe ? 'ml-auto' : ''}`}
                                         title="Click to view larger image"
                                       >
                                         <Image
@@ -1213,9 +1216,7 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
                                           className="object-cover w-full h-auto transition-transform duration-200 group-hover/img:scale-[1.02]"
                                           unoptimized
                                         />
-                                        {/* WhatsApp-style subtle inner border overlay */}
-                                        <div className="absolute inset-0 ring-1 ring-inset ring-black/10 rounded-lg pointer-events-none" />
-                                        <div className="absolute inset-0 bg-black/0 group-hover/img:bg-black/30 transition-all flex items-center justify-center opacity-0 group-hover/img:opacity-100">
+                                        <div className="absolute inset-0 bg-black/0 group-hover/img:bg-black/20 transition-all flex items-center justify-center opacity-0 group-hover/img:opacity-100">
                                           <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-black/70 text-white text-[11px] font-bold backdrop-blur-xs shadow-lg transform translate-y-1 group-hover/img:translate-y-0 transition-all">
                                             <Maximize2 size={13} />
                                             <span>Click to enlarge</span>

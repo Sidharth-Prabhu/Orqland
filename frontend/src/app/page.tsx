@@ -197,19 +197,59 @@ export default function Home() {
     }
 
     const unsubscribe = chatService.subscribe(effectiveViewerEmail, (updatedList) => {
-      setConversations(updatedList);
+      // If the user currently has an active conversation open and focused in the chat window,
+      // zero out unreadCount on that active conversation so no badges or indications persist
+      const sanitizedList = updatedList.map((c) => {
+        if (c.id === activeConversationId) {
+          return {
+            ...c,
+            unreadCount: 0,
+            unreadByClient: 0,
+            unreadByBusiness: 0,
+          };
+        }
+        return c;
+      });
 
-      // Detect newly arrived messages to fire the 2.5s top animated notification
+      setConversations((prev) => {
+        // Merge messages so ongoing local messages aren't prematurely replaced by an empty list
+        return sanitizedList.map((incoming) => {
+          const old = prev.find((p) => p.id === incoming.id);
+          if (old && incoming.messages.length === 0 && old.messages.length > 0) {
+            return {
+              ...incoming,
+              messages: old.messages,
+            };
+          }
+          return incoming;
+        });
+      });
+
+      // Detect newly arrived messages to fire the 2.8s top animated notification
       const currentMap: Record<string, number> = {};
-      updatedList.forEach((c) => {
+      sanitizedList.forEach((c) => {
         currentMap[c.id] = c.unreadCount || 0;
       });
 
       if (!initialLoadRef.current) {
         // Find conversation with newly incremented unread count
-        for (const c of updatedList) {
+        for (const c of sanitizedList) {
           const prevCount = prevUnreadMapRef.current[c.id] || 0;
           const currentCount = c.unreadCount || 0;
+
+          // Never notify the user if they are currently inside this active conversation window
+          if (c.id === activeConversationId && !isPageInBackground()) {
+            continue;
+          }
+
+          // Check last message sender: do not notify if the current viewer sent the last message
+          const lastMsg = c.messages && c.messages.length > 0 ? c.messages[c.messages.length - 1] : null;
+          const lastSenderEmail = lastMsg?.senderEmail?.toLowerCase().trim();
+          const viewerEmailNorm = (effectiveViewerEmail || '').toLowerCase().trim();
+          if (lastSenderEmail && viewerEmailNorm && lastSenderEmail === viewerEmailNorm) {
+            continue;
+          }
+
           if (currentCount > prevCount) {
             // Also re-include in notifications if previously cleared
             setClearedConversationIds((prev) => prev.filter((id) => id !== c.id));
@@ -252,14 +292,14 @@ export default function Home() {
     });
 
     return () => unsubscribe();
-  }, [effectiveViewerEmail, user?.email, user?.displayName, user?.photoURL]);
+  }, [effectiveViewerEmail, user?.email, user?.displayName, user?.photoURL, activeConversationId]);
 
-  // Auto-dismiss toast notification after 2.5 seconds
+  // Auto-dismiss toast notification after 2.8 seconds
   useEffect(() => {
     if (!activeToast) return;
     const timer = setTimeout(() => {
       setActiveToast(null);
-    }, 2500);
+    }, 2800);
     return () => clearTimeout(timer);
   }, [activeToast]);
 
@@ -480,6 +520,14 @@ export default function Home() {
 
   const handleSelectConversation = (id: string) => {
     setActiveConversationId(id);
+    // Optimistically clear unread state in local conversations list immediately (0ms)
+    setConversations((prev) =>
+      prev.map((c) =>
+        c.id === id
+          ? { ...c, unreadCount: 0, unreadByClient: 0, unreadByBusiness: 0 }
+          : c
+      )
+    );
     if (user?.email) {
       chatService.markAsRead(id, user.email);
     }
@@ -628,22 +676,28 @@ export default function Home() {
 
     const normTargetEmail = data.businessEmail.trim().toLowerCase();
 
-    // Check if an existing ended conversation already exists with this business
-    const existingEndedConv = conversations.find(
-      (c) =>
-        (c.businessEmail || '').toLowerCase() === normTargetEmail &&
-        c.status === 'ended'
+    // Check if an existing conversation already exists with this business
+    const existingConv = conversations.find(
+      (c) => (c.businessEmail || '').toLowerCase() === normTargetEmail
     );
 
-    if (existingEndedConv && !isBusiness) {
-      // Pop up the confirmation modal asking whether to reopen the chat session and update the category
-      setReopenPromptState({
-        isOpen: true,
-        conversationId: existingEndedConv.id,
-        businessName: data.businessName || existingEndedConv.businessName || 'Business',
-        categoryName: data.workspaceName || 'General Consultation',
-        isSubmitting: false,
-      });
+    if (existingConv && !isBusiness) {
+      if (existingConv.status === 'ended') {
+        // Pop up the confirmation modal asking whether to reopen the chat session and update the category
+        setReopenPromptState({
+          isOpen: true,
+          conversationId: existingConv.id,
+          businessName: data.businessName || existingConv.businessName || 'Business',
+          categoryName: data.workspaceName || 'General Consultation',
+          isSubmitting: false,
+        });
+        return;
+      }
+      // If already active, select it directly and send initial message if provided
+      setActiveConversationId(existingConv.id);
+      if (data.initialMessage && data.initialMessage.trim()) {
+        handleSendMessage(data.initialMessage.trim());
+      }
       return;
     }
 
@@ -698,9 +752,10 @@ export default function Home() {
             activeNavTab={activeNavTab}
             onNavTabChange={setActiveNavTab}
             notifications={notificationsList}
-            onSelectNotification={() => {
-              // Notification click only dismisses notification without opening chat directly
-              setActiveConversationId('');
+            onSelectNotification={(conversationId) => {
+              if (conversationId) {
+                setActiveConversationId(conversationId);
+              }
             }}
             onClearNotifications={handleClearAllNotifications}
           />
@@ -709,9 +764,10 @@ export default function Home() {
             business={currentBusinessUser}
             unreadCount={notificationsList.length}
             notifications={notificationsList}
-            onSelectNotification={() => {
-              // Notification click only dismisses notification without opening chat directly
-              setActiveConversationId('');
+            onSelectNotification={(conversationId) => {
+              if (conversationId) {
+                setActiveConversationId(conversationId);
+              }
             }}
             onClearNotifications={handleClearAllNotifications}
           />
@@ -864,13 +920,13 @@ export default function Home() {
         )}
       </div>
 
-      {/* Top Animated Toast Notification (2.5s duration) */}
+      {/* Top Animated Toast Notification (2.8s duration) */}
       {activeToast && (
         <ToastNotification
           senderName={activeToast.senderName}
           count={activeToast.count}
           onOpen={() => {
-            // Dismiss toast without directly opening chat
+            setActiveConversationId(activeToast.conversationId);
             setActiveToast(null);
           }}
           onDismiss={() => setActiveToast(null)}

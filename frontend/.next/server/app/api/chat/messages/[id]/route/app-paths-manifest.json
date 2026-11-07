@@ -1,3 +1,0 @@
-{
-  "/api/chat/messages/[id]/route": "app/api/chat/messages/[id]/route.js"
-}

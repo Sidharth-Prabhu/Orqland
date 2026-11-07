@@ -377,7 +377,7 @@ export const DirectMessagesList: React.FC<DirectMessagesListProps> = ({
                     <p className="text-[11px] line-clamp-1 leading-relaxed text-gray-400 font-normal min-w-0 flex-1">
                       {conv.workspaceInfo?.name || conv.bookingInfo?.serviceName || 'Technical Architecture'}
                     </p>
-                    {(conv.unreadCount || 0) > 0 && (
+                    {!isActive && (conv.unreadCount || 0) > 0 && (
                       <div className="flex items-center gap-1 shrink-0 ml-1.5 px-1.5 py-0.5 bg-blue-50/90 border border-blue-200/60 rounded-full">
                         <span className="w-1.5 h-1.5 rounded-full bg-blue-600 animate-pulse-dot" />
                         <span className="text-[10px] font-bold text-blue-700 tracking-tight leading-none">

@@ -42,9 +42,9 @@ export class StorageService {
       );
     }
 
-    const MAX_SIZE = 10 * 1024 * 1024; // 10MB
+    const MAX_SIZE = 5 * 1024 * 1024; // 5MB
     if (size > MAX_SIZE) {
-      throw new BadRequestException('File size exceeds the 10MB attachment limit.');
+      throw new BadRequestException('File size exceeds the 5MB attachment limit.');
     }
 
     const ext = fileName.split('.').pop()?.toLowerCase() || '';
@@ -78,13 +78,21 @@ export class StorageService {
       .update(payload)
       .digest('hex');
 
+    const firebaseBucket =
+      this.configService.get<string>('FIREBASE_STORAGE_BUCKET') ||
+      this.configService.get<string>('NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET') ||
+      'openpurpl-f8dd3.firebasestorage.app';
     const s3Bucket = this.configService.get<string>('S3_BUCKET');
     const s3Endpoint = this.configService.get<string>('S3_ENDPOINT');
 
     let uploadUrl: string;
     let downloadUrl: string;
 
-    if (s3Bucket && s3Endpoint) {
+    if (firebaseBucket) {
+      // Firebase Cloud Storage REST endpoint
+      uploadUrl = `https://firebasestorage.googleapis.com/v0/b/${firebaseBucket}/o?name=${encodeURIComponent(objectKey)}`;
+      downloadUrl = `https://firebasestorage.googleapis.com/v0/b/${firebaseBucket}/o/${encodeURIComponent(objectKey)}?alt=media`;
+    } else if (s3Bucket && s3Endpoint) {
       // Production S3 / GCS URL
       uploadUrl = `${s3Endpoint}/${s3Bucket}/${objectKey}?sig=${signature}&expires=${expiresAt}`;
       downloadUrl = `${s3Endpoint}/${s3Bucket}/${objectKey}`;

@@ -31,6 +31,9 @@ import {
 import { Conversation, ChatMessage, ChatAttachment } from '@/types/chat';
 import { isBusinessUser, detectSensitiveContent, validateAttachmentFile } from '@/lib/security';
 import { generatePdfThumbnail } from '@/lib/pdfThumbnail';
+import { compressImageIfNeeded } from '@/lib/imageCompressor';
+import { uploadFileToFirebaseStorage } from '@/lib/firebaseStorage';
+import { MAX_ATTACHMENT_SIZE_BYTES } from '@/lib/constants';
 import { DeleteChatModal } from '@/components/chat/DeleteChatModal';
 import { EndChatModal } from '@/components/chat/EndChatModal';
 import { AttachmentModal } from '@/components/chat/AttachmentModal';
@@ -168,10 +171,25 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
 
     const validated: Array<{ file: File; previewUrl: string; type: 'image' | 'pdf' }> = [];
 
-    for (const file of incoming) {
+    for (const incomingFile of incoming) {
+      let file = incomingFile;
+      const isImg =
+        incomingFile.type.toLowerCase().startsWith('image/') ||
+        ['jpg', 'jpeg', 'png', 'webp'].includes(incomingFile.name.split('.').pop()?.toLowerCase() || '');
+
+      // If an image exceeds 5MB, compress it without quality getting bad
+      if (isImg && incomingFile.size > MAX_ATTACHMENT_SIZE_BYTES) {
+        try {
+          const compResult = await compressImageIfNeeded(incomingFile, MAX_ATTACHMENT_SIZE_BYTES);
+          file = compResult.file;
+        } catch (err) {
+          console.warn('Image compression fallback:', err);
+        }
+      }
+
       const validation = validateAttachmentFile(file);
       if (!validation.valid) {
-        setAttachmentError(validation.error || 'Invalid file format. Please upload JPG, PNG, WebP or PDF.');
+        setAttachmentError(validation.error || 'Invalid file format. Please upload JPG, PNG, WebP or PDF under 5MB.');
         return;
       }
 
@@ -462,49 +480,43 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
       return;
     }
 
-    // If there are staged files, convert to ChatAttachment and send
+    // If there are staged files, upload directly to Firebase Cloud Storage and send
     if (stagedFiles.length > 0) {
       setIsSendingAttachments(true);
       try {
-        const readPromises = stagedFiles.map(
-          (item) =>
-            new Promise<ChatAttachment>((resolve, reject) => {
-              const reader = new FileReader();
-              reader.onload = async () => {
-                const base64Data = reader.result as string;
-                let thumb = item.previewUrl;
-                if (item.type === 'pdf' && (!thumb || thumb.startsWith('blob:'))) {
-                  try {
-                    thumb = await generatePdfThumbnail(item.file);
-                  } catch {
-                    thumb = '';
-                  }
-                }
-                const now = Date.now();
-                resolve({
-                  id: `att-${now}-${Math.random().toString(36).slice(2, 6)}`,
-                  type: item.type,
-                  name: item.file.name,
-                  url: base64Data,
-                  thumbnailUrl: thumb || undefined,
-                  size: item.file.size,
-                  mimeType: item.file.type,
-                  uploadedAt: now,
-                  expiresAt: now + 48 * 60 * 60 * 1000,
-                });
-              };
-              reader.onerror = () => reject(new Error(`Failed to read file ${item.file.name}`));
-              reader.readAsDataURL(item.file);
-            })
-        );
+        const uploadPromises = stagedFiles.map(async (item) => {
+          // Upload directly to Firebase Cloud Storage
+          const uploadRes = await uploadFileToFirebaseStorage(item.file, conversation.id);
 
-        const attachments = await Promise.all(readPromises);
+          let thumb = item.previewUrl;
+          if (item.type === 'pdf' && (!thumb || thumb.startsWith('blob:'))) {
+            try {
+              thumb = await generatePdfThumbnail(item.file);
+            } catch {
+              thumb = '';
+            }
+          }
+          const now = Date.now();
+          return {
+            id: `att-${now}-${Math.random().toString(36).slice(2, 6)}`,
+            type: item.type,
+            name: item.file.name,
+            url: uploadRes.url,
+            thumbnailUrl: thumb || undefined,
+            size: uploadRes.size,
+            mimeType: uploadRes.mimeType,
+            uploadedAt: now,
+            expiresAt: now + 48 * 60 * 60 * 1000,
+          };
+        });
+
+        const attachments = await Promise.all(uploadPromises);
         onSendMessage(inputText.trim(), attachments[0], attachments);
         setInputText('');
         clearStagedFiles();
       } catch (err) {
         console.error('Failed to send attachments:', err);
-        setAttachmentError('Failed to process attachments. Please try again.');
+        setAttachmentError('Failed to upload attachments to Cloud Storage. Please try again.');
       } finally {
         setIsSendingAttachments(false);
       }

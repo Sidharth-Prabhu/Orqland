@@ -22,7 +22,7 @@ export function validateAttachmentFile(file: File): {
   if (file.size > MAX_ATTACHMENT_SIZE_BYTES) {
     return {
       valid: false,
-      error: 'File size exceeds 10 MB limit. Please select a smaller file.',
+      error: 'File size exceeds 5 MB limit. Please select a smaller file.',
     };
   }
 

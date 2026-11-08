@@ -5,6 +5,9 @@ import Image from 'next/image';
 import { Paperclip, X, AlertTriangle, FileText, UploadCloud, AlertCircle, Plus } from 'lucide-react';
 import { validateAttachmentFile } from '@/lib/security';
 import { generatePdfThumbnail } from '@/lib/pdfThumbnail';
+import { compressImageIfNeeded } from '@/lib/imageCompressor';
+import { uploadFileToFirebaseStorage } from '@/lib/firebaseStorage';
+import { MAX_ATTACHMENT_SIZE_BYTES } from '@/lib/constants';
 import { ChatAttachment } from '@/types/chat';
 
 interface AttachmentModalProps {
@@ -68,10 +71,25 @@ export const AttachmentModal: React.FC<AttachmentModalProps> = ({
 
     const validatedItems: SelectedItem[] = [];
 
-    for (const file of newFiles) {
+    for (const incomingFile of newFiles) {
+      let file = incomingFile;
+      const isImg =
+        incomingFile.type.toLowerCase().startsWith('image/') ||
+        ['jpg', 'jpeg', 'png', 'webp'].includes(incomingFile.name.split('.').pop()?.toLowerCase() || '');
+
+      // If an image exceeds 5MB, compress it without quality getting bad
+      if (isImg && incomingFile.size > MAX_ATTACHMENT_SIZE_BYTES) {
+        try {
+          const compResult = await compressImageIfNeeded(incomingFile, MAX_ATTACHMENT_SIZE_BYTES);
+          file = compResult.file;
+        } catch (err) {
+          console.warn('Image compression fallback:', err);
+        }
+      }
+
       const validation = validateAttachmentFile(file);
       if (!validation.valid) {
-        setError(validation.error || 'Invalid file format. Please upload JPG, PNG, WebP or PDF.');
+        setError(validation.error || 'Invalid file format. Please upload JPG, PNG, WebP or PDF under 5MB.');
         return;
       }
       const type = validation.attachmentType === 'pdf' ? 'pdf' : 'image';
@@ -121,29 +139,21 @@ export const AttachmentModal: React.FC<AttachmentModalProps> = ({
     setError(null);
 
     try {
-      // Read all files as Base64 asynchronously and attach first-page thumbnails
-      const readPromises = items.map(
-        (item) =>
-          new Promise<ChatAttachment>((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = async () => {
-              const base64Data = reader.result as string;
-              let thumb = item.previewUrl;
-              if (item.type === 'pdf' && (!thumb || thumb.startsWith('blob:'))) {
-                try {
-                  thumb = await generatePdfThumbnail(item.file);
-                } catch {
-                  thumb = '';
-                }
-              }
-              resolve(buildFileAttachment(item.file, base64Data, item.type, thumb));
-            };
-            reader.onerror = () => reject(new Error(`Failed to read file ${item.file.name}`));
-            reader.readAsDataURL(item.file);
-          })
-      );
+      // Upload directly to Firebase Cloud Storage
+      const uploadPromises = items.map(async (item) => {
+        const uploadRes = await uploadFileToFirebaseStorage(item.file, 'modal_uploads');
+        let thumb = item.previewUrl;
+        if (item.type === 'pdf' && (!thumb || thumb.startsWith('blob:'))) {
+          try {
+            thumb = await generatePdfThumbnail(item.file);
+          } catch {
+            thumb = '';
+          }
+        }
+        return buildFileAttachment(item.file, uploadRes.url, item.type, thumb);
+      });
 
-      const attachments = await Promise.all(readPromises);
+      const attachments = await Promise.all(uploadPromises);
 
       // Primary attachment is the first item, full list is in attachments batch
       await onSendAttachment(attachments[0], caption, attachments);
@@ -235,7 +245,7 @@ export const AttachmentModal: React.FC<AttachmentModalProps> = ({
               Click to browse your device
             </p>
             <p className="text-[11px] text-gray-400 mt-1">
-              Select up to 6 pictures at once (Max 10 MB per file)
+              Select up to 6 pictures at once (Max 5 MB per file, auto-compressed if higher)
             </p>
           </div>
         ) : (

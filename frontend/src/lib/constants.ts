@@ -20,8 +20,8 @@ export const ALLOWED_MIME_TYPES = [
 // 48-Hour Retention Window (in milliseconds)
 export const ATTACHMENT_RETENTION_MS = 48 * 60 * 60 * 1000; // 48 hours
 
-// Max upload size: 10 MB
-export const MAX_ATTACHMENT_SIZE_BYTES = 10 * 1024 * 1024;
+// Max upload size: 5 MB (if higher, compressed automatically)
+export const MAX_ATTACHMENT_SIZE_BYTES = 5 * 1024 * 1024;
 
 // Prohibited Sensitive Information regex patterns
 export const SENSITIVE_INFO_PATTERNS = [

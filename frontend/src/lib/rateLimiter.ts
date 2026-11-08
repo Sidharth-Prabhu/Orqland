@@ -14,8 +14,8 @@ const WINDOW_MS = 60 * 1000; // 1 minute window
 const MAX_MESSAGES_PER_WINDOW = 60; // Max 60 messages per minute
 const MAX_REQUESTS_PER_WINDOW = 300; // Max 300 general requests per minute
 
-// Maximum payload size for attachments: 10MB
-export const MAX_PAYLOAD_BYTES = 10 * 1024 * 1024;
+// Maximum payload size for attachments: 5MB
+export const MAX_PAYLOAD_BYTES = 5 * 1024 * 1024;
 
 /**
  * Check if a user/IP is rate limited for sending messages
@@ -99,7 +99,7 @@ export function inspectAttachmentSecurity(attachment?: {
   if (attachment.size && attachment.size > MAX_PAYLOAD_BYTES) {
     return {
       valid: false,
-      error: 'Oversized upload: Attachments must not exceed 10 MB.',
+      error: 'Oversized upload: Attachments must not exceed 5 MB.',
     };
   }
 

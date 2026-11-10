@@ -374,9 +374,10 @@ export const chatService = {
    * Delete Chat (Business only - clears business view)
    */
   async deleteChat(conversationId: string, userEmail: string): Promise<Conversation> {
+    const authHeaders = await getAuthHeaders(userEmail);
     const res = await fetch('/api/chat/delete', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders,
       body: JSON.stringify({ conversationId, userEmail }),
     });
 
@@ -404,9 +405,10 @@ export const chatService = {
     messageId: string,
     userEmail: string
   ): Promise<Conversation> {
+    const authHeaders = await getAuthHeaders(userEmail);
     const res = await fetch('/api/chat/delete-message', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders,
       body: JSON.stringify({ conversationId, messageId, userEmail }),
     });
 
@@ -434,9 +436,10 @@ export const chatService = {
     newContent: string,
     userEmail: string
   ): Promise<Conversation> {
+    const authHeaders = await getAuthHeaders(userEmail);
     const res = await fetch('/api/chat/edit-message', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders,
       body: JSON.stringify({ conversationId, messageId, newContent, userEmail }),
     });
 
@@ -459,9 +462,10 @@ export const chatService = {
    * End Chat (Client only - ends chat session)
    */
   async endChat(conversationId: string, userEmail: string): Promise<Conversation> {
+    const authHeaders = await getAuthHeaders(userEmail);
     const res = await fetch('/api/chat/end', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders,
       body: JSON.stringify({ conversationId, userEmail }),
     });
 
@@ -484,9 +488,10 @@ export const chatService = {
    * Reopen an ended Chat session
    */
   async reopenChat(conversationId: string, userEmail: string, workspaceName?: string): Promise<Conversation> {
+    const authHeaders = await getAuthHeaders(userEmail);
     const res = await fetch('/api/chat/reopen', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders,
       body: JSON.stringify({ conversationId, userEmail, workspaceName }),
     });
 

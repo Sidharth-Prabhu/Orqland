@@ -6,5 +6,8 @@ export async function POST(req: NextRequest) {
   if (!body.conversationId) {
     return NextResponse.json({ error: 'conversationId required' }, { status: 400 });
   }
-  return proxyToNest(req, `/conversations/${body.conversationId}/end`, { method: 'POST' });
+  return proxyToNest(req, `/conversations/${body.conversationId}/end`, {
+    method: 'POST',
+    body,
+  });
 }

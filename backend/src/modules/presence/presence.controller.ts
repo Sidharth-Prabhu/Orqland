@@ -4,7 +4,7 @@ import { FirebaseAuthGuard } from '../../common/guards/firebase-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { InternalUser } from '../auth/auth.service';
 
-@Controller('api/user')
+@Controller('presence')
 @UseGuards(FirebaseAuthGuard)
 export class PresenceController {
   constructor(private readonly presenceService: PresenceService) {}

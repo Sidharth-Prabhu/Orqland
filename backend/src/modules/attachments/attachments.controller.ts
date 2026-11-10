@@ -20,7 +20,7 @@ import { Request, Response } from 'express';
 // In-memory file storage buffer for dev gateway upload/download
 const localFileStore = new Map<string, { buffer: Buffer; mimeType: string }>();
 
-@Controller('api/attachments')
+@Controller('attachments')
 export class AttachmentsController {
   constructor(private readonly attachmentsService: AttachmentsService) {}
 

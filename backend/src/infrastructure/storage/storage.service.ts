@@ -78,28 +78,28 @@ export class StorageService {
       .update(payload)
       .digest('hex');
 
-    const firebaseBucket =
-      this.configService.get<string>('FIREBASE_STORAGE_BUCKET') ||
-      this.configService.get<string>('NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET') ||
-      'openpurpl-f8dd3.firebasestorage.app';
+    const useLocalStorage =
+      this.configService.get<string>('USE_LOCAL_STORAGE') === 'true' ||
+      !this.configService.get<string>('FIREBASE_STORAGE_BUCKET_ACTIVE');
+    const firebaseBucket = this.configService.get<string>('FIREBASE_STORAGE_BUCKET_ACTIVE');
     const s3Bucket = this.configService.get<string>('S3_BUCKET');
     const s3Endpoint = this.configService.get<string>('S3_ENDPOINT');
 
     let uploadUrl: string;
     let downloadUrl: string;
 
-    if (firebaseBucket) {
+    if (useLocalStorage || (!firebaseBucket && !s3Bucket)) {
+      // Local self-hosted storage gateway URL (100% free, produces real HTTP URLs)
+      uploadUrl = `${this.publicBaseUrl}/api/v1/attachments/upload/${attachmentId}`;
+      downloadUrl = `${this.publicBaseUrl}/api/v1/attachments/download/${attachmentId}`;
+    } else if (firebaseBucket) {
       // Firebase Cloud Storage REST endpoint
       uploadUrl = `https://firebasestorage.googleapis.com/v0/b/${firebaseBucket}/o?name=${encodeURIComponent(objectKey)}`;
       downloadUrl = `https://firebasestorage.googleapis.com/v0/b/${firebaseBucket}/o/${encodeURIComponent(objectKey)}?alt=media`;
-    } else if (s3Bucket && s3Endpoint) {
+    } else {
       // Production S3 / GCS URL
       uploadUrl = `${s3Endpoint}/${s3Bucket}/${objectKey}?sig=${signature}&expires=${expiresAt}`;
       downloadUrl = `${s3Endpoint}/${s3Bucket}/${objectKey}`;
-    } else {
-      // App storage gateway URL
-      uploadUrl = `${this.publicBaseUrl}/api/attachments/upload/${attachmentId}?key=${encodeURIComponent(objectKey)}&sig=${signature}&exp=${expiresAt}`;
-      downloadUrl = `${this.publicBaseUrl}/api/attachments/download/${attachmentId}?key=${encodeURIComponent(objectKey)}&sig=${signature}`;
     }
 
     return {

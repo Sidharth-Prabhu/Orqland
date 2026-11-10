@@ -30,6 +30,16 @@ const nextConfig: NextConfig = {
         protocol: 'https',
         hostname: 'storage.googleapis.com',
       },
+      {
+        protocol: 'http',
+        hostname: 'localhost',
+        port: '3001',
+      },
+      {
+        protocol: 'http',
+        hostname: '127.0.0.1',
+        port: '3001',
+      },
     ],
   },
   turbopack: {

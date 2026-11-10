@@ -60,12 +60,16 @@ export async function proxyToNest(
     if (!headers['authorization'] && !headers['x-user-email'] && bodyText) {
       try {
         const parsed = JSON.parse(bodyText);
-        const devEmail = parsed.clientEmail || parsed.userEmail || parsed.senderEmail || parsed.email;
+        const devEmail =
+          parsed.userEmail ||
+          parsed.clientEmail ||
+          parsed.senderEmail ||
+          parsed.email;
         if (devEmail) {
           headers['x-user-email'] = devEmail;
         }
       } catch {
-        // ignore parse error
+        // ignore invalid JSON
       }
     }
 

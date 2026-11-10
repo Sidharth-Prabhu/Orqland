@@ -485,8 +485,12 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
       setIsSendingAttachments(true);
       try {
         const uploadPromises = stagedFiles.map(async (item) => {
-          // Upload directly to Firebase Cloud Storage
-          const uploadRes = await uploadFileToFirebaseStorage(item.file, conversation.id);
+          // Upload directly to storage gateway
+          const uploadRes = await uploadFileToFirebaseStorage(
+            item.file,
+            conversation.id,
+            currentUserEmail
+          );
 
           let thumb = item.previewUrl;
           if (item.type === 'pdf' && (!thumb || thumb.startsWith('blob:'))) {

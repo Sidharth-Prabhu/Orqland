@@ -9,6 +9,7 @@ import { compressImageIfNeeded } from '@/lib/imageCompressor';
 import { uploadFileToFirebaseStorage } from '@/lib/firebaseStorage';
 import { MAX_ATTACHMENT_SIZE_BYTES } from '@/lib/constants';
 import { ChatAttachment } from '@/types/chat';
+import { auth } from '@/lib/firebase';
 
 interface AttachmentModalProps {
   isOpen: boolean;
@@ -139,9 +140,13 @@ export const AttachmentModal: React.FC<AttachmentModalProps> = ({
     setError(null);
 
     try {
-      // Upload directly to Firebase Cloud Storage
+      // Upload directly to storage gateway
       const uploadPromises = items.map(async (item) => {
-        const uploadRes = await uploadFileToFirebaseStorage(item.file, 'modal_uploads');
+        const uploadRes = await uploadFileToFirebaseStorage(
+          item.file,
+          'modal_uploads',
+          auth.currentUser?.email || undefined
+        );
         let thumb = item.previewUrl;
         if (item.type === 'pdf' && (!thumb || thumb.startsWith('blob:'))) {
           try {

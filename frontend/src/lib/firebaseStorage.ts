@@ -6,7 +6,7 @@
  * 2. Firebase Cloud Storage (when configured)
  * 3. Graceful base64 data encoding as a last resort
  */
-import { storage } from './firebase';
+import { storage, auth } from './firebase';
 import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 
 export interface UploadResult {
@@ -41,17 +41,43 @@ function fallbackToFileReader(file: File, cleanName: string): Promise<UploadResu
 async function uploadToStorageGateway(
   file: File,
   conversationId: string,
+  userEmail?: string,
   onProgress?: (progressPercent: number) => void
 ): Promise<UploadResult> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+
+  // Get current user auth token and email if available
+  try {
+    const currentUser = auth.currentUser;
+    if (currentUser) {
+      const token = await currentUser.getIdToken().catch(() => '');
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+      if (currentUser.email) {
+        headers['X-User-Email'] = currentUser.email;
+      }
+    } else if (userEmail) {
+      headers['X-User-Email'] = userEmail;
+    }
+  } catch {
+    if (userEmail) {
+      headers['X-User-Email'] = userEmail;
+    }
+  }
+
   // 1. Request an upload policy and presigned URL from the backend
   const reqRes = await fetch('/api/chat/attachments/upload-url', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify({
       conversationId,
       fileName: file.name,
       mimeType: file.type || 'application/octet-stream',
       size: file.size,
+      userEmail: userEmail || auth.currentUser?.email || undefined,
     }),
   });
 
@@ -110,13 +136,14 @@ async function uploadToStorageGateway(
 export async function uploadFileToFirebaseStorage(
   file: File,
   conversationId: string,
+  userEmail?: string,
   onProgress?: (progressPercent: number) => void
 ): Promise<UploadResult> {
   const cleanName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
 
   // Attempt 1: Upload via Backend Storage Gateway (Generates authentic HTTP URL)
   try {
-    return await uploadToStorageGateway(file, conversationId, onProgress);
+    return await uploadToStorageGateway(file, conversationId, userEmail, onProgress);
   } catch (gatewayErr) {
     console.warn('Backend storage gateway upload failed, checking Firebase fallback:', gatewayErr);
   }

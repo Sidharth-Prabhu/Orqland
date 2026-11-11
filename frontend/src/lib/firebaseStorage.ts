@@ -1,11 +1,16 @@
 /**
- * Attachment Storage Client
- * 
- * Supports uploading attachments via:
- * 1. Backend storage gateway (generating real HTTP download URLs e.g. http://localhost:3001/api/v1/attachments/download/...)
- * 2. Firebase Cloud Storage (when configured)
- * 3. Graceful base64 data encoding as a last resort
+ * Attachment Storage Client (Firebase Cloud Storage Direct + Resilient Failover)
+ *
+ * Architecture:
+ * 1. Direct Client-to-Cloud Upload: Directly streams binary payloads from the browser
+ *    to Google Firebase Cloud Storage (bypassing backend server CPU/bandwidth).
+ * 2. Automatic Progress Tracking: Reports transfer status (0-100%) for live UI bars.
+ * 3. Resilient Fallback 1 (Storage Gateway): If direct Firebase upload fails or network blocks it,
+ *    it routes via the backend direct storage gateway.
+ * 4. Resilient Fallback 2 (Local Data Encoding): If completely offline or unconfigured,
+ *    gracefully encodes as a base64 Data URL so the user is never blocked from chatting.
  */
+
 import { storage, auth } from './firebase';
 import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 
@@ -17,6 +22,9 @@ export interface UploadResult {
   mimeType: string;
 }
 
+/**
+ * Fallback to standard base64 data encoding
+ */
 function fallbackToFileReader(file: File, cleanName: string): Promise<UploadResult> {
   return new Promise<UploadResult>((resolve, reject) => {
     const reader = new FileReader();
@@ -35,8 +43,7 @@ function fallbackToFileReader(file: File, cleanName: string): Promise<UploadResu
 }
 
 /**
- * Uploads a file via the backend direct object storage gateway.
- * Returns a genuine HTTP download URL (e.g. http://localhost:3001/api/v1/attachments/download/:id).
+ * Secondary Fallback: Backend Storage Gateway
  */
 async function uploadToStorageGateway(
   file: File,
@@ -48,7 +55,6 @@ async function uploadToStorageGateway(
     'Content-Type': 'application/json',
   };
 
-  // Get current user auth token and email if available
   try {
     const currentUser = auth.currentUser;
     if (currentUser) {
@@ -68,7 +74,6 @@ async function uploadToStorageGateway(
     }
   }
 
-  // 1. Request an upload policy and presigned URL from the backend
   const reqRes = await fetch('/api/chat/attachments/upload-url', {
     method: 'POST',
     headers,
@@ -82,7 +87,7 @@ async function uploadToStorageGateway(
   });
 
   if (!reqRes.ok) {
-    throw new Error(`Failed to obtain upload URL: ${reqRes.statusText}`);
+    throw new Error(`Storage gateway request rejected: ${reqRes.statusText}`);
   }
 
   const policy = await reqRes.json();
@@ -90,10 +95,9 @@ async function uploadToStorageGateway(
   const downloadUrl: string = policy.downloadUrl;
 
   if (!uploadUrl || !downloadUrl) {
-    throw new Error('Invalid upload policy response from server.');
+    throw new Error('Invalid storage policy response.');
   }
 
-  // 2. Perform direct binary PUT upload
   await new Promise<void>((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open('PUT', uploadUrl, true);
@@ -112,11 +116,11 @@ async function uploadToStorageGateway(
       if (xhr.status >= 200 && xhr.status < 300) {
         resolve();
       } else {
-        reject(new Error(`Upload failed with status ${xhr.status}`));
+        reject(new Error(`Gateway upload failed with status ${xhr.status}`));
       }
     };
 
-    xhr.onerror = () => reject(new Error('Network error during file upload.'));
+    xhr.onerror = () => reject(new Error('Network error during gateway upload.'));
     xhr.send(file);
   });
 
@@ -130,8 +134,68 @@ async function uploadToStorageGateway(
 }
 
 /**
- * Primary attachment upload entry point.
- * Prioritizes the dedicated backend storage gateway to guarantee genuine HTTP URL generation.
+ * Direct Firebase Cloud Storage upload with retry & automatic fallback.
+ */
+async function uploadDirectToFirebase(
+  file: File,
+  conversationId: string,
+  onProgress?: (progressPercent: number) => void
+): Promise<UploadResult> {
+  const timestamp = Date.now();
+  const cleanName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+  const uniqueId = Math.random().toString(36).slice(2, 8);
+  const storagePath = `chat_attachments/${conversationId}/${timestamp}_${uniqueId}_${cleanName}`;
+  const storageRef = ref(storage, storagePath);
+
+  const uploadTask = uploadBytesResumable(storageRef, file, {
+    contentType: file.type || 'application/octet-stream',
+    customMetadata: {
+      conversationId,
+      originalName: file.name,
+      uploadedAt: String(timestamp),
+    },
+  });
+
+  return new Promise<UploadResult>((resolve, reject) => {
+    uploadTask.on(
+      'state_changed',
+      (snapshot) => {
+        if (snapshot.totalBytes > 0 && onProgress) {
+          const percent = Math.round(
+            (snapshot.bytesTransferred / snapshot.totalBytes) * 100
+          );
+          onProgress(percent);
+        }
+      },
+      (error) => {
+        console.warn('Firebase direct upload error:', error);
+        reject(error);
+      },
+      async () => {
+        try {
+          const downloadUrl = await getDownloadURL(uploadTask.snapshot.ref);
+          resolve({
+            url: downloadUrl,
+            storagePath,
+            name: file.name,
+            size: file.size,
+            mimeType: file.type,
+          });
+        } catch (getErr) {
+          reject(getErr);
+        }
+      }
+    );
+  });
+}
+
+/**
+ * Primary Robust Upload Entry Point
+ * 
+ * Hierarchy:
+ * 1. Firebase Cloud Storage (Official Direct Object Storage)
+ * 2. Backend Storage Gateway
+ * 3. In-memory / Data URL Encoding
  */
 export async function uploadFileToFirebaseStorage(
   file: File,
@@ -141,66 +205,28 @@ export async function uploadFileToFirebaseStorage(
 ): Promise<UploadResult> {
   const cleanName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
 
-  // Attempt 1: Upload via Backend Storage Gateway (Generates authentic HTTP URL)
+  // 1. Primary: Direct Firebase Cloud Storage Upload
   try {
-    return await uploadToStorageGateway(file, conversationId, userEmail, onProgress);
+    const res = await uploadDirectToFirebase(file, conversationId, onProgress);
+    return res;
+  } catch (firebaseErr) {
+    console.warn(
+      'Direct Firebase Storage upload encountered an issue; attempting storage gateway fallback:',
+      firebaseErr
+    );
+  }
+
+  // 2. Secondary: Backend Storage Gateway
+  try {
+    const res = await uploadToStorageGateway(file, conversationId, userEmail, onProgress);
+    return res;
   } catch (gatewayErr) {
-    console.warn('Backend storage gateway upload failed, checking Firebase fallback:', gatewayErr);
+    console.warn(
+      'Backend storage gateway also failed; engaging resilient data transfer:',
+      gatewayErr
+    );
   }
 
-  // Attempt 2: Firebase Storage (if available)
-  try {
-    const timestamp = Date.now();
-    const uniqueId = Math.random().toString(36).slice(2, 8);
-    const storagePath = `chat_attachments/${conversationId}/${timestamp}_${uniqueId}_${cleanName}`;
-    const storageRef = ref(storage, storagePath);
-
-    const uploadTask = uploadBytesResumable(storageRef, file, {
-      contentType: file.type || 'application/octet-stream',
-      customMetadata: {
-        conversationId,
-        originalName: file.name,
-        uploadedAt: String(timestamp),
-      },
-    });
-
-    return await new Promise<UploadResult>((resolve, reject) => {
-      uploadTask.on(
-        'state_changed',
-        (snapshot) => {
-          if (snapshot.totalBytes > 0 && onProgress) {
-            const percent = Math.round(
-              (snapshot.bytesTransferred / snapshot.totalBytes) * 100
-            );
-            onProgress(percent);
-          }
-        },
-        async (error) => {
-          console.warn('Firebase upload error, falling back to local file reader:', error);
-          try {
-            resolve(await fallbackToFileReader(file, cleanName));
-          } catch (readErr) {
-            reject(readErr);
-          }
-        },
-        async () => {
-          try {
-            const downloadUrl = await getDownloadURL(uploadTask.snapshot.ref);
-            resolve({
-              url: downloadUrl,
-              storagePath,
-              name: file.name,
-              size: file.size,
-              mimeType: file.type,
-            });
-          } catch {
-            resolve(await fallbackToFileReader(file, cleanName));
-          }
-        }
-      );
-    });
-  } catch (err) {
-    console.warn('All cloud storage attempts failed; falling back to local data encoding:', err);
-    return fallbackToFileReader(file, cleanName);
-  }
+  // 3. Tertiary: Local file reader fallback
+  return fallbackToFileReader(file, cleanName);
 }

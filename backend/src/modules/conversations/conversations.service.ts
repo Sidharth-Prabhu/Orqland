@@ -4,6 +4,7 @@ import {
   NotFoundException,
   ForbiddenException,
   BadRequestException,
+  InternalServerErrorException,
   Inject,
   Optional,
   forwardRef,
@@ -172,10 +173,11 @@ export class ConversationsService {
         return result;
       } catch (err) {
         this.logger.error('Failed to list conversations from DB:', err);
+        throw new InternalServerErrorException('Database failure while querying conversations. Failed closed.');
       }
     }
 
-    // In-memory fallback
+    // In-memory fallback (only when DB is not configured/connected in local dev)
     const isBiz = user.role === 'business';
     const email = user.email.toLowerCase();
 
@@ -309,10 +311,11 @@ export class ConversationsService {
         return this.getConversation(newConvId, clientUser);
       } catch (err) {
         this.logger.error('Failed to initiate conversation in DB:', err);
+        throw new InternalServerErrorException('Database failure while initiating conversation. Failed closed.');
       }
     }
 
-    // In-memory fallback
+    // In-memory fallback (only when DB is not configured/connected in local dev)
     // ENFORCE SINGLE SESSION PER CLIENT-BUSINESS PAIR:
     // Check if a conversation already exists between this client and business
     const existingMemory = this.inMemoryConversations.find(
@@ -399,10 +402,11 @@ export class ConversationsService {
         return this.getConversation(conversationId, user);
       } catch (err) {
         this.logger.error('Failed to end conversation in DB:', err);
+        throw new InternalServerErrorException('Database failure while ending conversation. Failed closed.');
       }
     }
 
-    // In-memory fallback
+    // In-memory fallback (only when DB is not configured/connected in local dev)
     const target = this.inMemoryConversations.find((c) => c.id === conversationId);
     if (target) {
       target.status = 'ended';
@@ -444,10 +448,11 @@ export class ConversationsService {
         return this.getConversation(conversationId, user);
       } catch (err) {
         this.logger.error('Failed to reopen conversation in DB:', err);
+        throw new InternalServerErrorException('Database failure while reopening conversation. Failed closed.');
       }
     }
 
-    // In-memory fallback
+    // In-memory fallback (only when DB is not configured/connected in local dev)
     const target = this.inMemoryConversations.find((c) => c.id === conversationId);
     if (target) {
       target.status = 'active';
@@ -493,10 +498,11 @@ export class ConversationsService {
         return this.getConversation(conversationId, user);
       } catch (err) {
         this.logger.error('Failed to delete chat view in DB:', err);
+        throw new InternalServerErrorException('Database failure while updating chat view in DB. Failed closed.');
       }
     }
 
-    // In-memory fallback
+    // In-memory fallback (only when DB is not configured/connected in local dev)
     const target = this.inMemoryConversations.find((c) => c.id === conversationId);
     if (target) {
       if (isBiz) {
@@ -548,10 +554,11 @@ export class ConversationsService {
         return;
       } catch (err) {
         this.logger.error('Failed to mark conversation as read in DB:', err);
+        throw new InternalServerErrorException('Database failure while marking conversation as read. Failed closed.');
       }
     }
 
-    // In-memory fallback
+    // In-memory fallback (only when DB is not configured/connected in local dev)
     const conv = this.inMemoryConversations.find((c) => c.id === conversationId);
     if (conv) {
       if (isBiz) {

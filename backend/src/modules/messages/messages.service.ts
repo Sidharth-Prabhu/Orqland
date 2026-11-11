@@ -6,6 +6,7 @@ import {
   BadRequestException,
   HttpException,
   HttpStatus,
+  InternalServerErrorException,
   Inject,
   forwardRef,
 } from '@nestjs/common';
@@ -202,10 +203,11 @@ export class MessagesService {
         };
       } catch (err) {
         this.logger.error('Failed to query messages from DB:', err);
+        throw new InternalServerErrorException('Database failure while querying messages. Failed closed to prevent data inconsistency.');
       }
     }
 
-    // In-memory fallback
+    // In-memory fallback (only when DB is not configured/connected in local dev)
     let list = this.inMemoryMessages.filter((m) => m.conversationId === conversationId);
     if (deletedAt) {
       list = list.filter((m) => m.createdAt > deletedAt);
@@ -401,10 +403,11 @@ export class MessagesService {
         return createdMsg;
       } catch (err) {
         this.logger.error('Failed to insert message into DB:', err);
+        throw new InternalServerErrorException('Database failure while persisting message. Failed closed to prevent data loss.');
       }
     }
 
-    // In-memory fallback
+    // In-memory fallback (only when DB is not configured/connected in local dev)
     this.inMemoryMessages.push(createdMsg);
     if (dto.idempotencyKey) {
       await this.redisService.setIdempotentMessage(dto.idempotencyKey, createdMsg, 86400);
@@ -483,10 +486,11 @@ export class MessagesService {
           throw err;
         }
         this.logger.error('Failed to edit message in DB:', err);
+        throw new InternalServerErrorException('Database failure while editing message. Failed closed.');
       }
     }
 
-    // In-memory fallback
+    // In-memory fallback (only when DB is not configured/connected in local dev)
     const msg = this.inMemoryMessages.find((m) => m.id === dto.messageId);
     if (!msg) {
       throw new NotFoundException('Message not found.');
@@ -566,10 +570,11 @@ export class MessagesService {
           throw err;
         }
         this.logger.error('Failed to delete message in DB:', err);
+        throw new InternalServerErrorException('Database failure while deleting message. Failed closed.');
       }
     }
 
-    // In-memory fallback
+    // In-memory fallback (only when DB is not configured/connected in local dev)
     const msg = this.inMemoryMessages.find((m) => m.id === dto.messageId);
     if (!msg) {
       throw new NotFoundException('Message not found.');

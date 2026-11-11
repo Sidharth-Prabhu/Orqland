@@ -31,8 +31,8 @@ import * as crypto from 'crypto';
 // 10-minute edit window & 15-minute delete window per specification
 const EDIT_WINDOW_MS = 10 * 60 * 1000;
 const DELETE_WINDOW_MS = 15 * 60 * 1000;
-// 48-hour attachment retention
-const ATTACHMENT_RETENTION_MS = 48 * 60 * 60 * 1000;
+// Attachment retention: Temporary 30-minute testing window (normally 48 hours)
+const ATTACHMENT_RETENTION_MS = 30 * 60 * 1000;
 
 @Injectable()
 export class MessagesService {

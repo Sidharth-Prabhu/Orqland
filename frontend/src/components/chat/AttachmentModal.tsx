@@ -7,7 +7,7 @@ import { validateAttachmentFile } from '@/lib/security';
 import { generatePdfThumbnail } from '@/lib/pdfThumbnail';
 import { compressImageIfNeeded } from '@/lib/imageCompressor';
 import { uploadFileToFirebaseStorage } from '@/lib/firebaseStorage';
-import { MAX_ATTACHMENT_SIZE_BYTES } from '@/lib/constants';
+import { MAX_ATTACHMENT_SIZE_BYTES, ATTACHMENT_RETENTION_MS } from '@/lib/constants';
 import { ChatAttachment } from '@/types/chat';
 import { auth } from '@/lib/firebase';
 
@@ -43,7 +43,7 @@ function buildFileAttachment(
     size: file.size,
     mimeType: file.type,
     uploadedAt: now,
-    expiresAt: now + 48 * 60 * 60 * 1000,
+    expiresAt: now + ATTACHMENT_RETENTION_MS,
   };
 }
 

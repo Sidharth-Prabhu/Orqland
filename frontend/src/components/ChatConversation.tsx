@@ -39,7 +39,7 @@ import {
 import { generatePdfThumbnail } from '@/lib/pdfThumbnail';
 import { compressImageIfNeeded } from '@/lib/imageCompressor';
 import { uploadFileToFirebaseStorage } from '@/lib/firebaseStorage';
-import { MAX_ATTACHMENT_SIZE_BYTES } from '@/lib/constants';
+import { MAX_ATTACHMENT_SIZE_BYTES, ATTACHMENT_RETENTION_MS } from '@/lib/constants';
 import { DeleteChatModal } from '@/components/chat/DeleteChatModal';
 import { EndChatModal } from '@/components/chat/EndChatModal';
 import { AttachmentModal } from '@/components/chat/AttachmentModal';
@@ -508,7 +508,7 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
         size: item.file.size,
         mimeType: item.file.type || (item.type === 'pdf' ? 'application/pdf' : 'image/jpeg'),
         uploadedAt: now,
-        expiresAt: now + 48 * 60 * 60 * 1000,
+        expiresAt: now + ATTACHMENT_RETENTION_MS,
       }));
 
       // Render optimistic message in chat bubble with 0ms perceived latency
@@ -542,7 +542,7 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
               size: uploadRes.size,
               mimeType: uploadRes.mimeType,
               uploadedAt: now,
-              expiresAt: now + 48 * 60 * 60 * 1000,
+              expiresAt: now + ATTACHMENT_RETENTION_MS,
             };
           });
 
@@ -1531,7 +1531,7 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
                     <Clock size={12} className="text-indigo-600" />
                   </div>
                   <span className="leading-tight font-medium">
-                    Note: Shared media is securely stored for 48 hours and automatically deleted afterward.
+                    Note: Shared media is securely stored for 30 minutes (testing window) and automatically deleted afterward.
                   </span>
                 </div>
               </div>

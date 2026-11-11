@@ -488,6 +488,25 @@ export const chatService = {
     messageId: string,
     userEmail: string
   ): Promise<Conversation> {
+    // If message contains media attachments, delete them from Firebase Cloud Storage
+    const existingConvs = loadCachedConversations(userEmail);
+    const existingConv = existingConvs.find((c) => c.id === conversationId);
+    const targetMsg = existingConv?.messages.find((m) => m.id === messageId);
+    if (targetMsg) {
+      const urlsToDelete: string[] = [];
+      if (targetMsg.attachment?.url) urlsToDelete.push(targetMsg.attachment.url);
+      if (targetMsg.attachments && targetMsg.attachments.length > 0) {
+        targetMsg.attachments.forEach((a) => {
+          if (a.url) urlsToDelete.push(a.url);
+        });
+      }
+      urlsToDelete.forEach((url) => {
+        deleteFileFromFirebaseStorage(url).catch((err) =>
+          console.warn('Could not delete attachment file from Firebase Storage:', err)
+        );
+      });
+    }
+
     const authHeaders = await getAuthHeaders(userEmail);
     const res = await fetch('/api/chat/delete-message', {
       method: 'POST',

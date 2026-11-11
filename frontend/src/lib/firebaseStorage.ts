@@ -8,7 +8,7 @@
  */
 
 import { storage, auth } from './firebase';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 
 export interface UploadResult {
   url: string;
@@ -211,4 +211,49 @@ export async function uploadFileToFirebaseStorage(
 
   // 3. Tertiary: Local file reader fallback
   return fallbackToFileReader(file, cleanName);
+}
+
+/**
+ * Extract storage object path from a Firebase Storage download URL
+ */
+export function extractStoragePathFromUrl(url: string): string | null {
+  if (!url || typeof url !== 'string') return null;
+  // Match Firebase Storage format: /v0/b/<bucket>/o/<encodedPath>?alt=media...
+  const match = url.match(/\/o\/([^?]+)/);
+  if (match && match[1]) {
+    try {
+      return decodeURIComponent(match[1]);
+    } catch {
+      return match[1];
+    }
+  }
+  // If already relative path
+  if (url.startsWith('chat_attachments/')) {
+    return url;
+  }
+  return null;
+}
+
+/**
+ * Delete expired or deleted file directly from Firebase Cloud Storage
+ */
+export async function deleteFileFromFirebaseStorage(urlOrPath: string): Promise<boolean> {
+  const objectPath = extractStoragePathFromUrl(urlOrPath);
+  if (!objectPath) {
+    return false;
+  }
+
+  try {
+    const fileRef = ref(storage, objectPath);
+    await deleteObject(fileRef);
+    return true;
+  } catch (err: unknown) {
+    const errCode = (err as { code?: string })?.code;
+    // If already deleted / not found, treat as succeeded
+    if (errCode === 'storage/object-not-found') {
+      return true;
+    }
+    console.warn('Notice: Firebase file deletion skipped or not permitted:', objectPath, errCode || err);
+    return false;
+  }
 }

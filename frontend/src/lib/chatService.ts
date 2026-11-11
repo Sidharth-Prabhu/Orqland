@@ -1,5 +1,7 @@
 import { Conversation, ChatMessage, ChatAttachment } from '@/types/chat';
 import { auth } from './firebase';
+import { isAttachmentExpired } from './security';
+import { deleteFileFromFirebaseStorage } from './firebaseStorage';
 
 const CHANNEL_NAME = 'orqland_chat_channel';
 const STORAGE_PREFIX = 'orqland_cache_v4_';
@@ -140,11 +142,90 @@ function notifyCrossTab() {
   }
 }
 
+// Automatically purge attachments older than 48 hours across memory, local cache, and Cloud Storage
+function enforceAttachmentRetention(convs: Conversation[]): Conversation[] {
+  let hasExpired = false;
+  const expiredUrlsToDelete: string[] = [];
+
+  const cleaned = convs.map((conv) => {
+    let convModified = false;
+    const messages = conv.messages.map((msg) => {
+      let msgModified = false;
+      let singleAtt = msg.attachment;
+      let atts = msg.attachments;
+
+      if (
+        singleAtt &&
+        singleAtt.type !== 'location' &&
+        (!singleAtt.isExpired && isAttachmentExpired(singleAtt.uploadedAt, singleAtt.expiresAt))
+      ) {
+        msgModified = true;
+        if (singleAtt.url) expiredUrlsToDelete.push(singleAtt.url);
+        singleAtt = {
+          ...singleAtt,
+          isExpired: true,
+          url: '',
+          thumbnailUrl: '',
+        };
+      }
+
+      if (atts && atts.length > 0) {
+        const cleanedAtts = atts.map((a) => {
+          if (
+            a.type !== 'location' &&
+            (!a.isExpired && isAttachmentExpired(a.uploadedAt, a.expiresAt))
+          ) {
+            msgModified = true;
+            if (a.url) expiredUrlsToDelete.push(a.url);
+            return {
+              ...a,
+              isExpired: true,
+              url: '',
+              thumbnailUrl: '',
+            };
+          }
+          return a;
+        });
+        if (msgModified) {
+          atts = cleanedAtts;
+        }
+      }
+
+      if (msgModified) {
+        convModified = true;
+        hasExpired = true;
+        return {
+          ...msg,
+          attachment: singleAtt,
+          attachments: atts,
+        };
+      }
+      return msg;
+    });
+
+    if (convModified) {
+      return { ...conv, messages };
+    }
+    return conv;
+  });
+
+  // Permanently delete expired files from Firebase Cloud Storage in the background
+  if (expiredUrlsToDelete.length > 0 && typeof window !== 'undefined') {
+    expiredUrlsToDelete.forEach((url) => {
+      deleteFileFromFirebaseStorage(url).catch((err) =>
+        console.warn('Could not delete expired file from Firebase:', err)
+      );
+    });
+  }
+
+  return cleaned;
+}
+
 // Load cached conversations (instant 0ms response on page refresh)
 function loadCachedConversations(email?: string | null): Conversation[] {
   const norm = (email || '').trim().toLowerCase() || 'default';
   if (inMemoryCache[norm] && inMemoryCache[norm].length > 0) {
-    return inMemoryCache[norm];
+    return enforceAttachmentRetention(inMemoryCache[norm]);
   }
   if (typeof window === 'undefined') return [];
   try {
@@ -152,8 +233,9 @@ function loadCachedConversations(email?: string | null): Conversation[] {
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed) && parsed.length > 0) {
-      inMemoryCache[norm] = parsed;
-      return parsed;
+      const sanitized = enforceAttachmentRetention(parsed);
+      inMemoryCache[norm] = sanitized;
+      return sanitized;
     }
     return [];
   } catch {
@@ -237,8 +319,9 @@ export const chatService = {
         : null;
 
       if (list) {
-        saveCachedConversations(list, email);
-        return list;
+        const purged = enforceAttachmentRetention(list);
+        saveCachedConversations(purged, email);
+        return purged;
       }
       return loadCachedConversations(email);
     } catch (err) {

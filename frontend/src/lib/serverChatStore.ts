@@ -103,21 +103,54 @@ function purgeExpired(convs: Conversation[]): Conversation[] {
   const cleaned = convs.map((conv) => {
     let convModified = false;
     const messages = conv.messages.map((msg) => {
+      let msgModified = false;
+      let singleAtt = msg.attachment;
+      let atts = msg.attachments;
+
       if (
-        msg.attachment &&
-        msg.attachment.type !== 'location' &&
-        !msg.attachment.isExpired &&
-        isAttachmentExpired(msg.attachment.uploadedAt, msg.attachment.expiresAt)
+        singleAtt &&
+        singleAtt.type !== 'location' &&
+        !singleAtt.isExpired &&
+        isAttachmentExpired(singleAtt.uploadedAt, singleAtt.expiresAt)
       ) {
+        msgModified = true;
+        singleAtt = {
+          ...singleAtt,
+          isExpired: true,
+          url: '',
+          thumbnailUrl: '',
+        };
+      }
+
+      if (atts && atts.length > 0) {
+        const cleanedAtts = atts.map((a) => {
+          if (
+            a.type !== 'location' &&
+            !a.isExpired &&
+            isAttachmentExpired(a.uploadedAt, a.expiresAt)
+          ) {
+            msgModified = true;
+            return {
+              ...a,
+              isExpired: true,
+              url: '',
+              thumbnailUrl: '',
+            };
+          }
+          return a;
+        });
+        if (msgModified) {
+          atts = cleanedAtts;
+        }
+      }
+
+      if (msgModified) {
         convModified = true;
         modified = true;
         return {
           ...msg,
-          attachment: {
-            ...msg.attachment,
-            isExpired: true,
-            url: '', // purge the data/URL
-          },
+          attachment: singleAtt,
+          attachments: atts,
         };
       }
       return msg;

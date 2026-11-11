@@ -30,7 +30,12 @@ import {
 } from 'lucide-react';
 import { Conversation, ChatMessage, ChatAttachment } from '@/types/chat';
 import { chatService } from '@/lib/chatService';
-import { isBusinessUser, detectSensitiveContent, validateAttachmentFile } from '@/lib/security';
+import {
+  isBusinessUser,
+  detectSensitiveContent,
+  validateAttachmentFile,
+  isAttachmentExpired,
+} from '@/lib/security';
 import { generatePdfThumbnail } from '@/lib/pdfThumbnail';
 import { compressImageIfNeeded } from '@/lib/imageCompressor';
 import { uploadFileToFirebaseStorage } from '@/lib/firebaseStorage';
@@ -1150,8 +1155,22 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
                                 return (
                                   <div className={`w-full flex flex-col ${isMe ? 'items-end' : 'items-start'} ${displayContent ? 'mt-1.5 pt-1.5 border-t border-gray-200/80' : ''}`}>
                                     <div className={`${gridClass} ${isMe ? 'ml-auto' : ''}`}>
-                                      {msg.attachments.map((att, idx) => (
-                                        att.type === 'pdf' ? (
+                                      {msg.attachments.map((att, idx) => {
+                                        const isExpired = att.isExpired || (att.uploadedAt && isAttachmentExpired(att.uploadedAt, att.expiresAt));
+                                        if (isExpired) {
+                                          return (
+                                            <div
+                                              key={att.id || idx}
+                                              className={`w-full ${itemHeightClass} rounded-lg bg-amber-50/90 border border-amber-200/80 p-2 flex flex-col items-center justify-center text-center text-amber-800 shadow-2xs select-none`}
+                                            >
+                                              <AlertTriangle size={16} className="text-amber-600 mb-1" />
+                                              <span className="text-[10px] font-semibold leading-tight">Expired</span>
+                                              <span className="text-[9px] text-amber-600/80 mt-0.5">Media deleted</span>
+                                            </div>
+                                          );
+                                        }
+
+                                        return att.type === 'pdf' ? (
                                           <div
                                             key={att.id || idx}
                                             onClick={() =>
@@ -1216,8 +1235,8 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
                                               <Maximize2 size={14} className="text-white drop-shadow-md" />
                                             </div>
                                           </div>
-                                        ) : null
-                                      ))}
+                                        ) : null;
+                                      })}
                                     </div>
                                   </div>
                                 );
@@ -1226,10 +1245,12 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
                               const singleAtt = (msg.attachments && msg.attachments.length === 1) ? msg.attachments[0] : msg.attachment;
                               if (!singleAtt) return null;
 
+                              const isSingleExpired = singleAtt.isExpired || (singleAtt.uploadedAt && isAttachmentExpired(singleAtt.uploadedAt, singleAtt.expiresAt));
+
                               return (
                                 <div className={`w-full flex flex-col ${isMe ? 'items-end' : 'items-start'} ${displayContent ? 'mt-1.5 pt-1.5 border-t border-gray-200/80' : ''}`}>
                                   {/* If Expired: */}
-                                  {singleAtt.isExpired ? (
+                                  {isSingleExpired ? (
                                     <div className="flex items-center gap-2 text-[11px] p-2 bg-amber-50 border border-amber-200/60 rounded-md text-amber-800">
                                       <AlertTriangle size={14} className="text-amber-600 flex-shrink-0" />
                                       <span>Attachment expired and permanently deleted.</span>

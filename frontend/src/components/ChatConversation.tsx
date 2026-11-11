@@ -738,37 +738,34 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
               name={conversation.participant.name}
               size={36}
             />
-            {conversation.participant.isOnline && !isChatEnded && (
-              <span
-                className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-emerald-500 ring-2 ring-white"
-                title="Online now"
-              />
-            )}
           </div>
 
           <div className="min-w-0">
-            <div className="flex items-center gap-1.5 sm:gap-2">
+            <div className="flex items-center">
               <span className="text-[13px] sm:text-[14px] font-bold text-gray-900 leading-tight truncate">
                 {conversation.participant.name}
               </span>
+            </div>
+            <div className="flex items-center gap-1.5 mt-0.5 truncate">
               {isChatEnded ? (
-                <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-red-100 text-red-700 flex-shrink-0">
+                <span className="text-[9px] font-bold px-1.5 py-0.2 rounded-full bg-red-100 text-red-700 flex-shrink-0 leading-tight">
                   Ended
                 </span>
               ) : conversation.participant.isOnline ? (
-                <span className="inline-flex items-center gap-1 text-[9px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200/60 flex-shrink-0">
+                <span className="inline-flex items-center gap-1 text-[9px] font-bold px-1.5 py-0.2 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200/60 flex-shrink-0 leading-tight">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
                   <span>Active</span>
                 </span>
               ) : (
-                <span className="inline-flex items-center gap-1 text-[9px] font-semibold px-2 py-0.5 rounded-full bg-gray-100 text-gray-500 border border-gray-200/60 flex-shrink-0">
+                <span className="inline-flex items-center gap-1 text-[9px] font-semibold px-1.5 py-0.2 rounded-full bg-gray-100 text-gray-500 border border-gray-200/60 flex-shrink-0 leading-tight">
                   <span className="w-1.5 h-1.5 rounded-full bg-gray-400" />
                   <span>Offline</span>
                 </span>
               )}
-            </div>
-            <div className="text-[10px] sm:text-[11px] font-medium text-gray-400 mt-0.5 truncate">
-              {conversation.workspaceInfo?.name || 'Technical Architecture'}
+              <span className="text-[10px] text-gray-300">•</span>
+              <span className="text-[10px] sm:text-[11px] font-medium text-gray-400 truncate">
+                {conversation.workspaceInfo?.name || 'Technical Architecture'}
+              </span>
             </div>
           </div>
         </div>

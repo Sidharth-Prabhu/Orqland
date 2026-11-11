@@ -237,9 +237,12 @@ export default function Home() {
 
     const unsubscribe = chatService.subscribe(effectiveViewerEmail, (updatedList) => {
       // If the user currently has an active conversation open and focused in the chat window,
-      // zero out unreadCount on that active conversation so no badges or indications persist
+      // zero out unreadCount on that active conversation so no badges or indications persist.
+      // However, if the page is in the background (tab switched, minimized, or window unfocused),
+      // keep the unread count intact so the background notification triggers properly!
+      const shouldZeroUnread = !isPageInBackground();
       const sanitizedList = updatedList.map((c) => {
-        if (c.id === activeConversationId) {
+        if (c.id === activeConversationId && shouldZeroUnread) {
           return {
             ...c,
             unreadCount: 0,

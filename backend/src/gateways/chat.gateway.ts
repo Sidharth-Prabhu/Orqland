@@ -175,23 +175,35 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         createdAt: createdMessage.createdAt,
       });
 
-      // 2. Broadcast message to conversation room (so all participants receive it)
+      // 2. Broadcast message to conversation room AND direct recipient user room
       this.server.to(`conversation:${payload.conversationId}`).emit(CHAT_EVENTS.MESSAGE_NEW, {
         ...createdMessage,
         isMe: false, // will be evaluated per receiver client
       });
 
-      // 3. Emit conversation updated event to conversation room
-      this.server.to(`conversation:${payload.conversationId}`).emit(CHAT_EVENTS.CONVERSATION_UPDATED, {
+      // Also emit to recipient's personal user room so they receive it in background or if not in active conversation room
+      const conv = await this.conversationsService.getConversation(payload.conversationId, user);
+      const otherParticipantId = conv.clientId === user.id ? conv.businessId : conv.clientId;
+      if (otherParticipantId) {
+        this.server.to(`user:${otherParticipantId}`).emit(CHAT_EVENTS.MESSAGE_NEW, {
+          ...createdMessage,
+          isMe: false,
+        });
+      }
+
+      // 3. Emit conversation updated event to conversation room and recipient user room
+      const convUpdatePayload = {
         conversationId: payload.conversationId,
         lastMessage: createdMessage.content,
         lastMessageTime: createdMessage.timestamp,
         lastMessageTimestamp: createdMessage.createdAt,
-      });
+      };
+      this.server.to(`conversation:${payload.conversationId}`).emit(CHAT_EVENTS.CONVERSATION_UPDATED, convUpdatePayload);
+      if (otherParticipantId) {
+        this.server.to(`user:${otherParticipantId}`).emit(CHAT_EVENTS.CONVERSATION_UPDATED, convUpdatePayload);
+      }
 
       // 4. Trigger push notification for other participant
-      const conv = await this.conversationsService.getConversation(payload.conversationId, user);
-      const otherParticipantId = conv.clientId === user.id ? conv.businessId : conv.clientId;
       await this.notificationsService.sendPushNotification({
         recipientUserId: otherParticipantId,
         senderName: user.name,

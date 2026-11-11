@@ -10,6 +10,7 @@ import {
   Conversation,
   PaginatedMessagesResponseDto,
 } from '@orqland/contracts';
+import { isPageInBackground, sendBrowserNotification } from '@/lib/browserNotifications';
 
 export function useChatSocket(activeConversationId: string | null) {
   const { user } = useAuth();
@@ -87,6 +88,17 @@ export function useChatSocket(activeConversationId: string | null) {
               : c
           );
         });
+
+        // Trigger system desktop push notification if tab/browser is minimized or in background
+        if (!isFromMe && isPageInBackground()) {
+          sendBrowserNotification({
+            title: newMsg.senderName || 'New Message',
+            body: newMsg.content || (newMsg.attachments?.length ? 'Sent an attachment' : 'Sent you a message'),
+            icon: newMsg.senderAvatar || '/favicon.ico',
+            tag: `chat-${newMsg.conversationId}`,
+            conversationId: newMsg.conversationId,
+          });
+        }
       });
 
       // Handle typing events

@@ -42,6 +42,7 @@ import { LocationModal } from '@/components/chat/LocationModal';
 import { ImageViewerModal } from '@/components/chat/ImageViewerModal';
 import { PdfViewerModal } from '@/components/chat/PdfViewerModal';
 import { PdfThumbnail } from '@/components/chat/PdfThumbnail';
+import { ChatImageAttachment } from '@/components/chat/ChatImageAttachment';
 import { UserAvatar } from '@/components/ui/UserAvatar';
 
 interface ChatConversationProps {
@@ -1202,13 +1203,11 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
                                             className={`relative w-full ${itemHeightClass} rounded-lg overflow-hidden bg-gray-100 border border-black/10 shadow-[0_1px_2px_rgba(0,0,0,0.06)] cursor-pointer group/item hover:border-black/25 transition-all`}
                                             title="Click to view image"
                                           >
-                                            <Image
+                                            <ChatImageAttachment
                                               src={att.url || att.thumbnailUrl || ''}
                                               alt={att.name || 'Image'}
                                               fill
                                               sizes="(max-width: 640px) 100px, 120px"
-                                              className="object-cover transition-transform duration-200 group-hover/item:scale-105"
-                                              unoptimized
                                               priority={idx < 4}
                                             />
                                             {/* WhatsApp-style subtle inner shadow/border overlay */}
@@ -1259,13 +1258,11 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
                                         className={`rounded-lg overflow-hidden relative max-w-sm max-h-60 bg-white border border-gray-200 shadow-2xs cursor-pointer group/img transition-all hover:border-gray-300 ${isMe ? 'ml-auto' : ''}`}
                                         title="Click to view larger image"
                                       >
-                                        <Image
+                                        <ChatImageAttachment
                                           src={singleAtt.url}
                                           alt={singleAtt.name || 'Image'}
                                           width={320}
                                           height={200}
-                                          className="object-cover w-full h-auto transition-transform duration-200 group-hover/img:scale-[1.02]"
-                                          unoptimized
                                           priority
                                         />
                                         <div className="absolute inset-0 bg-black/0 group-hover/img:bg-black/20 transition-all flex items-center justify-center opacity-0 group-hover/img:opacity-100">

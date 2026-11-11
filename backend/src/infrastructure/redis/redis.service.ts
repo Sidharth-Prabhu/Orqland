@@ -13,6 +13,9 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   private inMemoryPresence = new Map<string, number>();
   private inMemoryTyping = new Map<string, Set<string>>();
   private inMemoryRateLimits = new Map<string, number[]>();
+  private inMemorySockets = new Map<string, Set<string>>();
+  private inMemoryIdempotency = new Map<string, { value: any; expiresAt: number }>();
+  private inMemoryFiles = new Map<string, { buffer: Buffer; mimeType: string }>();
 
   constructor(private readonly configService: ConfigService) {}
 
@@ -123,6 +126,135 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       } else {
         set.delete(userId);
       }
+    }
+  }
+
+  // ----------------------------------------------------
+  // Distributed Presence Sockets
+  // ----------------------------------------------------
+  async trackUserSocket(userId: string, socketId: string): Promise<boolean> {
+    const id = userId.trim();
+    if (this.isConnected && this.pubClient) {
+      const key = `presence:sockets:${id}`;
+      const countBefore = await this.pubClient.scard(key);
+      await this.pubClient.sadd(key, socketId);
+      // Refresh user heartbeat
+      await this.recordHeartbeat(id, id);
+      return countBefore === 0;
+    } else {
+      let sockets = this.inMemorySockets.get(id);
+      const wasOffline = !sockets || sockets.size === 0;
+      if (!sockets) {
+        sockets = new Set();
+        this.inMemorySockets.set(id, sockets);
+      }
+      sockets.add(socketId);
+      await this.recordHeartbeat(id, id);
+      return wasOffline;
+    }
+  }
+
+  async untrackUserSocket(userId: string, socketId: string): Promise<boolean> {
+    const id = userId.trim();
+    if (this.isConnected && this.pubClient) {
+      const key = `presence:sockets:${id}`;
+      await this.pubClient.srem(key, socketId);
+      const remaining = await this.pubClient.scard(key);
+      if (remaining === 0) {
+        await this.pubClient.del(key);
+        return true; // went offline
+      }
+      return false;
+    } else {
+      const sockets = this.inMemorySockets.get(id);
+      if (sockets) {
+        sockets.delete(socketId);
+        if (sockets.size === 0) {
+          this.inMemorySockets.delete(id);
+          return true; // went offline
+        }
+      }
+      return false;
+    }
+  }
+
+  // ----------------------------------------------------
+  // Distributed Idempotency Cache
+  // ----------------------------------------------------
+  async getIdempotentMessage<T = any>(key: string): Promise<T | null> {
+    const cleanKey = `idempotency:${key.trim()}`;
+    if (this.isConnected && this.pubClient) {
+      const cached = await this.pubClient.get(cleanKey);
+      if (!cached) return null;
+      try {
+        return JSON.parse(cached) as T;
+      } catch {
+        return null;
+      }
+    } else {
+      const entry = this.inMemoryIdempotency.get(cleanKey);
+      if (!entry) return null;
+      if (Date.now() > entry.expiresAt) {
+        this.inMemoryIdempotency.delete(cleanKey);
+        return null;
+      }
+      return entry.value as T;
+    }
+  }
+
+  async setIdempotentMessage<T = any>(
+    key: string,
+    value: T,
+    ttlSeconds = 86400
+  ): Promise<void> {
+    const cleanKey = `idempotency:${key.trim()}`;
+    if (this.isConnected && this.pubClient) {
+      await this.pubClient.set(cleanKey, JSON.stringify(value), 'EX', ttlSeconds);
+    } else {
+      this.inMemoryIdempotency.set(cleanKey, {
+        value,
+        expiresAt: Date.now() + ttlSeconds * 1000,
+      });
+    }
+  }
+
+  // ----------------------------------------------------
+  // Distributed Attachment Storage (Dev Gateway)
+  // ----------------------------------------------------
+  async setAttachmentBuffer(
+    id: string,
+    buffer: Buffer,
+    mimeType: string,
+    ttlSeconds = 172800 // 48 hours
+  ): Promise<void> {
+    const key = `attachment:data:${id.trim()}`;
+    const metaKey = `attachment:meta:${id.trim()}`;
+    if (this.isConnected && this.pubClient) {
+      // Store base64 data and metadata
+      await this.pubClient.set(key, buffer.toString('base64'), 'EX', ttlSeconds);
+      await this.pubClient.set(metaKey, JSON.stringify({ mimeType }), 'EX', ttlSeconds);
+    } else {
+      this.inMemoryFiles.set(id, { buffer, mimeType });
+    }
+  }
+
+  async getAttachmentBuffer(
+    id: string
+  ): Promise<{ buffer: Buffer; mimeType: string } | null> {
+    const key = `attachment:data:${id.trim()}`;
+    const metaKey = `attachment:meta:${id.trim()}`;
+    if (this.isConnected && this.pubClient) {
+      const b64 = await this.pubClient.get(key);
+      const meta = await this.pubClient.get(metaKey);
+      if (!b64) return null;
+      const mimeType = meta ? (JSON.parse(meta)?.mimeType || 'application/octet-stream') : 'application/octet-stream';
+      return {
+        buffer: Buffer.from(b64, 'base64'),
+        mimeType,
+      };
+    } else {
+      const found = this.inMemoryFiles.get(id);
+      return found || null;
     }
   }
 

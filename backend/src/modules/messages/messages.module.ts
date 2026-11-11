@@ -4,9 +4,15 @@ import { MessagesService } from './messages.service';
 import { DatabaseModule } from '../../infrastructure/database/database.module';
 import { AuthModule } from '../auth/auth.module';
 import { ConversationsModule } from '../conversations/conversations.module';
+import { RedisModule } from '../../infrastructure/redis/redis.module';
 
 @Module({
-  imports: [DatabaseModule, AuthModule, forwardRef(() => ConversationsModule)],
+  imports: [
+    DatabaseModule,
+    AuthModule,
+    forwardRef(() => ConversationsModule),
+    RedisModule,
+  ],
   controllers: [MessagesController],
   providers: [MessagesService],
   exports: [MessagesService],

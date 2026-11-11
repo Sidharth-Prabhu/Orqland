@@ -4,6 +4,7 @@ import { isAttachmentExpired } from './security';
 import { deleteFileFromFirebaseStorage } from './firebaseStorage';
 import { getChatSocket } from './socket/client';
 import { CHAT_EVENTS } from '@orqland/contracts';
+import { checkMessageRateLimit, checkGeneralRateLimit } from './rateLimiter';
 
 const CHANNEL_NAME = 'orqland_chat_channel';
 const STORAGE_PREFIX = 'orqland_cache_v4_';
@@ -390,6 +391,12 @@ export const chatService = {
       attachment,
       attachments,
     } = params;
+
+    // Client-side rate limiting enforcement
+    const rateLimitCheck = checkMessageRateLimit(senderEmail);
+    if (!rateLimitCheck.allowed) {
+      throw new Error(rateLimitCheck.reason || 'Message rate limit exceeded. Please wait a moment.');
+    }
 
     // Optimistic UI update
     const now = Date.now();

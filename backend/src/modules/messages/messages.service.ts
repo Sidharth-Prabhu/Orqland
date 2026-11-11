@@ -4,10 +4,13 @@ import {
   NotFoundException,
   ForbiddenException,
   BadRequestException,
+  HttpException,
+  HttpStatus,
   Inject,
   forwardRef,
 } from '@nestjs/common';
 import { DatabaseService } from '../../infrastructure/database/database.service';
+import { RedisService } from '../../infrastructure/redis/redis.service';
 import {
   messages,
   conversations,
@@ -40,11 +43,10 @@ export class MessagesService {
 
   // In-memory message store for development fallback
   private inMemoryMessages: ChatMessage[] = [];
-  // Idempotency cache: idempotencyKey -> ChatMessage
-  private idempotencyCache = new Map<string, ChatMessage>();
 
   constructor(
     private readonly dbService: DatabaseService,
+    private readonly redisService: RedisService,
     @Inject(forwardRef(() => ConversationsService))
     private readonly conversationsService: ConversationsService
   ) {
@@ -233,6 +235,20 @@ export class MessagesService {
     user: InternalUser,
     dto: SendMessageDto
   ): Promise<ChatMessage> {
+    // Distributed rate limit: 60 messages / minute per user
+    const rateLimit = await this.redisService.checkRateLimit(user.id, 60, 60);
+    if (!rateLimit.allowed) {
+      throw new HttpException(
+        {
+          statusCode: HttpStatus.TOO_MANY_REQUESTS,
+          errorCode: ChatErrorCode.RATE_LIMIT_EXCEEDED,
+          message: `Rate limit exceeded. Please wait ${rateLimit.retryAfterSeconds || 1}s before sending more messages.`,
+          retryAfterSeconds: rateLimit.retryAfterSeconds,
+        },
+        HttpStatus.TOO_MANY_REQUESTS
+      );
+    }
+
     const conv = await this.conversationsService.getConversation(dto.conversationId, user);
 
     // Enforce active session
@@ -244,11 +260,12 @@ export class MessagesService {
       });
     }
 
-    // Enforce idempotency key deduplication
+    // Enforce distributed idempotency key deduplication
     if (dto.idempotencyKey) {
-      if (this.idempotencyCache.has(dto.idempotencyKey)) {
-        this.logger.log(`Idempotency hit for key ${dto.idempotencyKey}; returning existing message.`);
-        return this.idempotencyCache.get(dto.idempotencyKey)!;
+      const cached = await this.redisService.getIdempotentMessage<ChatMessage>(dto.idempotencyKey);
+      if (cached) {
+        this.logger.log(`Distributed idempotency hit for key ${dto.idempotencyKey}; returning existing message.`);
+        return cached;
       }
     }
 
@@ -367,7 +384,7 @@ export class MessagesService {
         });
 
         if (dto.idempotencyKey) {
-          this.idempotencyCache.set(dto.idempotencyKey, createdMsg);
+          await this.redisService.setIdempotentMessage(dto.idempotencyKey, createdMsg, 86400);
         }
 
         return createdMsg;
@@ -379,7 +396,7 @@ export class MessagesService {
     // In-memory fallback
     this.inMemoryMessages.push(createdMsg);
     if (dto.idempotencyKey) {
-      this.idempotencyCache.set(dto.idempotencyKey, createdMsg);
+      await this.redisService.setIdempotentMessage(dto.idempotencyKey, createdMsg, 86400);
     }
 
     // Update the conversation's last message, timestamp, and unread counters in in-memory mode

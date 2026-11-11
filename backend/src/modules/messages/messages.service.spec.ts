@@ -57,8 +57,18 @@ describe('MessagesService', () => {
       }),
     } as any;
 
+    const mockIdempotencyStore = new Map<string, any>();
+    const redisService = {
+      checkRateLimit: jest.fn().mockResolvedValue({ allowed: true }),
+      getIdempotentMessage: jest.fn().mockImplementation((k: string) => Promise.resolve(mockIdempotencyStore.get(k) || null)),
+      setIdempotentMessage: jest.fn().mockImplementation((k: string, v: any) => {
+        mockIdempotencyStore.set(k, v);
+        return Promise.resolve();
+      }),
+    } as any;
+
     conversationsService = new ConversationsService(dbService, authService, presenceService);
-    messagesService = new MessagesService(dbService, conversationsService);
+    messagesService = new MessagesService(dbService, redisService, conversationsService);
   });
 
   describe('sendMessage', () => {

@@ -177,10 +177,10 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
         incomingFile.type.toLowerCase().startsWith('image/') ||
         ['jpg', 'jpeg', 'png', 'webp'].includes(incomingFile.name.split('.').pop()?.toLowerCase() || '');
 
-      // If an image exceeds 5MB, compress it without quality getting bad
-      if (isImg && incomingFile.size > MAX_ATTACHMENT_SIZE_BYTES) {
+      // Optimize images to retina resolution (2560px) & lossless WebP/JPEG to ensure instant fast uploads
+      if (isImg) {
         try {
-          const compResult = await compressImageIfNeeded(incomingFile, MAX_ATTACHMENT_SIZE_BYTES);
+          const compResult = await compressImageIfNeeded(incomingFile);
           file = compResult.file;
         } catch (err) {
           console.warn('Image compression fallback:', err);

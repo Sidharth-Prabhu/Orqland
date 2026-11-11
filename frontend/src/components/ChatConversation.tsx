@@ -746,7 +746,7 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
                 {conversation.participant.name}
               </span>
             </div>
-            <div className="flex items-center gap-1.5 mt-0.5 truncate">
+            <div className="flex items-center mt-0.5">
               {isChatEnded ? (
                 <span className="text-[9px] font-bold px-1.5 py-0.2 rounded-full bg-red-100 text-red-700 flex-shrink-0 leading-tight">
                   Ended
@@ -762,10 +762,6 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
                   <span>Offline</span>
                 </span>
               )}
-              <span className="text-[10px] text-gray-300">•</span>
-              <span className="text-[10px] sm:text-[11px] font-medium text-gray-400 truncate">
-                {conversation.workspaceInfo?.name || 'Technical Architecture'}
-              </span>
             </div>
           </div>
         </div>

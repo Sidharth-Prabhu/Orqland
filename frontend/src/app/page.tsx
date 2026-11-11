@@ -434,7 +434,8 @@ export default function Home() {
   const handleSendMessage = async (
     text: string,
     attachment?: ChatAttachment,
-    attachments?: ChatAttachment[]
+    attachments?: ChatAttachment[],
+    skipApiSync?: boolean
   ) => {
     if (!activeConversation || !user?.email) return;
 
@@ -481,6 +482,11 @@ export default function Home() {
         return c;
       })
     );
+
+    // If background handler will upload and sync with the API itself, skip redundant immediate call
+    if (skipApiSync) {
+      return;
+    }
 
     try {
       const result = await chatService.sendMessage({

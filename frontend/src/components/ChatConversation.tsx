@@ -29,6 +29,7 @@ import {
   UploadCloud,
 } from 'lucide-react';
 import { Conversation, ChatMessage, ChatAttachment } from '@/types/chat';
+import { chatService } from '@/lib/chatService';
 import { isBusinessUser, detectSensitiveContent, validateAttachmentFile } from '@/lib/security';
 import { generatePdfThumbnail } from '@/lib/pdfThumbnail';
 import { compressImageIfNeeded } from '@/lib/imageCompressor';
@@ -49,7 +50,8 @@ interface ChatConversationProps {
   onSendMessage: (
     text: string,
     attachment?: ChatAttachment,
-    attachments?: ChatAttachment[]
+    attachments?: ChatAttachment[],
+    skipApiSync?: boolean
   ) => void;
   onDeleteChat?: (conversationId: string) => Promise<void>;
   onEndChat?: (conversationId: string) => Promise<void>;
@@ -480,50 +482,82 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
       return;
     }
 
-    // If there are staged files, upload directly to Firebase Cloud Storage and send
+    // If there are staged files, send optimistically immediately (0ms delay) and upload in the background
     if (stagedFiles.length > 0) {
-      setIsSendingAttachments(true);
-      try {
-        const uploadPromises = stagedFiles.map(async (item) => {
-          // Upload directly to storage gateway
-          const uploadRes = await uploadFileToFirebaseStorage(
-            item.file,
-            conversation.id,
-            currentUserEmail
-          );
+      const filesToProcess = [...stagedFiles];
+      const textToSend = inputText.trim();
+      const now = Date.now();
 
-          let thumb = item.previewUrl;
-          if (item.type === 'pdf' && (!thumb || thumb.startsWith('blob:'))) {
-            try {
-              thumb = await generatePdfThumbnail(item.file);
-            } catch {
-              thumb = '';
+      // Clear input bar and staged previews immediately for snappy Telegram/WhatsApp feel
+      setInputText('');
+      clearStagedFiles();
+
+      // Create optimistic attachments with local preview blob URLs
+      const optimisticAttachments = filesToProcess.map((item, idx) => ({
+        id: `att-temp-${now}-${idx}-${Math.random().toString(36).slice(2, 6)}`,
+        type: item.type,
+        name: item.file.name,
+        url: item.previewUrl,
+        thumbnailUrl: item.previewUrl,
+        size: item.file.size,
+        mimeType: item.file.type || (item.type === 'pdf' ? 'application/pdf' : 'image/jpeg'),
+        uploadedAt: now,
+        expiresAt: now + 48 * 60 * 60 * 1000,
+      }));
+
+      // Render optimistic message in chat bubble with 0ms perceived latency
+      onSendMessage(textToSend, optimisticAttachments[0], optimisticAttachments, true);
+
+      // Perform cloud upload in parallel in the background without locking the input bar
+      (async () => {
+        try {
+          const uploadPromises = filesToProcess.map(async (item, idx) => {
+            const uploadRes = await uploadFileToFirebaseStorage(
+              item.file,
+              conversation.id,
+              currentUserEmail
+            );
+
+            let thumb = item.previewUrl;
+            if (item.type === 'pdf' && (!thumb || thumb.startsWith('blob:'))) {
+              try {
+                thumb = await generatePdfThumbnail(item.file);
+              } catch {
+                thumb = '';
+              }
             }
-          }
-          const now = Date.now();
-          return {
-            id: `att-${now}-${Math.random().toString(36).slice(2, 6)}`,
-            type: item.type,
-            name: item.file.name,
-            url: uploadRes.url,
-            thumbnailUrl: thumb || undefined,
-            size: uploadRes.size,
-            mimeType: uploadRes.mimeType,
-            uploadedAt: now,
-            expiresAt: now + 48 * 60 * 60 * 1000,
-          };
-        });
 
-        const attachments = await Promise.all(uploadPromises);
-        onSendMessage(inputText.trim(), attachments[0], attachments);
-        setInputText('');
-        clearStagedFiles();
-      } catch (err) {
-        console.error('Failed to send attachments:', err);
-        setAttachmentError('Failed to upload attachments to Cloud Storage. Please try again.');
-      } finally {
-        setIsSendingAttachments(false);
-      }
+            return {
+              id: optimisticAttachments[idx].id,
+              type: item.type,
+              name: item.file.name,
+              url: uploadRes.url,
+              thumbnailUrl: thumb || undefined,
+              size: uploadRes.size,
+              mimeType: uploadRes.mimeType,
+              uploadedAt: now,
+              expiresAt: now + 48 * 60 * 60 * 1000,
+            };
+          });
+
+          const finalAttachments = await Promise.all(uploadPromises);
+
+          // Update backend & cross-tab sync with verified Cloud Storage URLs
+          await chatService.sendMessage({
+            conversationId: conversation.id,
+            senderEmail: currentUserEmail,
+            senderName: isBusiness ? (conversation.businessName || 'Business') : (conversation.clientName || 'Client'),
+            senderAvatar: isBusiness ? (conversation.businessAvatar || '') : (conversation.clientAvatar || ''),
+            content: textToSend,
+            attachment: finalAttachments[0],
+            attachments: finalAttachments,
+          });
+        } catch (err) {
+          console.error('Failed to complete background attachment upload:', err);
+          setAttachmentError('Some attachments failed to upload to Cloud Storage. Please check connection.');
+        }
+      })();
+
       return;
     }
 
@@ -1175,6 +1209,7 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
                                               sizes="(max-width: 640px) 100px, 120px"
                                               className="object-cover transition-transform duration-200 group-hover/item:scale-105"
                                               unoptimized
+                                              priority={idx < 4}
                                             />
                                             {/* WhatsApp-style subtle inner shadow/border overlay */}
                                             <div className="absolute inset-0 ring-1 ring-inset ring-black/10 rounded-lg pointer-events-none" />
@@ -1231,6 +1266,7 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
                                           height={200}
                                           className="object-cover w-full h-auto transition-transform duration-200 group-hover/img:scale-[1.02]"
                                           unoptimized
+                                          priority
                                         />
                                         <div className="absolute inset-0 bg-black/0 group-hover/img:bg-black/20 transition-all flex items-center justify-center opacity-0 group-hover/img:opacity-100">
                                           <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-black/70 text-white text-[11px] font-bold backdrop-blur-xs shadow-lg transform translate-y-1 group-hover/img:translate-y-0 transition-all">

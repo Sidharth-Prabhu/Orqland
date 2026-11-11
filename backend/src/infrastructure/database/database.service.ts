@@ -164,6 +164,15 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
           UNIQUE (message_id, user_id)
         );
 
+        CREATE TABLE IF NOT EXISTS user_push_tokens (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          fcm_token TEXT UNIQUE NOT NULL,
+          device_type VARCHAR(50) DEFAULT 'web',
+          updated_at BIGINT NOT NULL,
+          created_at BIGINT NOT NULL
+        );
+
         CREATE TABLE IF NOT EXISTS outbox_events (
           id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
           event_type VARCHAR(100) NOT NULL,

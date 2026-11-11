@@ -191,7 +191,9 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       // 4. Trigger push notification for other participant
       const conv = await this.conversationsService.getConversation(payload.conversationId, user);
+      const otherParticipantId = conv.clientId === user.id ? conv.businessId : conv.clientId;
       await this.notificationsService.sendPushNotification({
+        recipientUserId: otherParticipantId,
         senderName: user.name,
         conversationId: payload.conversationId,
         hasAttachment: Boolean(payload.attachments && payload.attachments.length > 0),

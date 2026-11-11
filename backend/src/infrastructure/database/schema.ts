@@ -172,6 +172,25 @@ export const messageReceipts = pgTable(
 );
 
 // ----------------------------------------------------
+// User Push Notification Tokens (FCM Tokens)
+// ----------------------------------------------------
+export const userPushTokens = pgTable(
+  'user_push_tokens',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    fcmToken: text('fcm_token').notNull(),
+    deviceType: varchar('device_type', { length: 50 }).default('web'),
+    updatedAt: bigint('updated_at', { mode: 'number' }).notNull(),
+    createdAt: bigint('created_at', { mode: 'number' }).notNull(),
+  },
+  (table) => [
+    uniqueIndex('user_push_tokens_token_idx').on(table.fcmToken),
+    index('user_push_tokens_user_idx').on(table.userId),
+  ]
+);
+
+// ----------------------------------------------------
 // Outbox Events (Transactional Post-Commit Broadcast)
 // ----------------------------------------------------
 export const outboxEvents = pgTable(

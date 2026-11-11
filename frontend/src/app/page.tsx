@@ -199,9 +199,21 @@ export default function Home() {
         import('@/lib/browserNotifications').then(({ registerNotificationServiceWorker }) => {
           registerNotificationServiceWorker().catch(() => {});
         });
+        import('@/lib/pushNotifications').then(({ initializePushNotifications }) => {
+          initializePushNotifications().catch(() => {});
+        });
       }
     }
   }, []);
+
+  // Initialize FCM Push Notifications once user is authenticated
+  useEffect(() => {
+    if (user?.email) {
+      import('@/lib/pushNotifications').then(({ initializePushNotifications }) => {
+        initializePushNotifications(user.email || undefined).catch(() => {});
+      });
+    }
+  }, [user?.email]);
 
   // Redirect unauthenticated users to /login immediately
   useEffect(() => {

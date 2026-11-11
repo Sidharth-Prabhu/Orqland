@@ -2,6 +2,8 @@ import { Conversation, ChatMessage, ChatAttachment } from '@/types/chat';
 import { auth } from './firebase';
 import { isAttachmentExpired } from './security';
 import { deleteFileFromFirebaseStorage } from './firebaseStorage';
+import { getChatSocket } from './socket/client';
+import { CHAT_EVENTS } from '@orqland/contracts';
 
 const CHANNEL_NAME = 'orqland_chat_channel';
 const STORAGE_PREFIX = 'orqland_cache_v4_';
@@ -711,24 +713,50 @@ export const chatService = {
       document.addEventListener('visibilitychange', handleVisibility);
     }
 
-    // 4. Background polling loop (every 1s) to guarantee fast cross-device & cross-browser synchronization
-    // Also dispatch heartbeat ping periodically every 20s
-    let heartbeatTick = 0;
-    chatService.sendHeartbeat(email);
+    // 4. Real-time WebSocket synchronization (replaces aggressive 1s HTTP polling)
+    let socketCleanup: (() => void) | null = null;
+    if (typeof window !== 'undefined') {
+      try {
+        const socket = getChatSocket(undefined, email);
 
-    const interval = setInterval(() => {
-      heartbeatTick++;
-      if (heartbeatTick % 20 === 0) {
-        chatService.sendHeartbeat(email);
+        const onSocketMessage = (payload: any) => {
+          handleRemoteUpdate();
+        };
+
+        const onPresenceUpdate = (payload: any) => {
+          handleRemoteUpdate();
+        };
+
+        const onConversationUpdate = (payload: any) => {
+          handleRemoteUpdate();
+        };
+
+        socket.on(CHAT_EVENTS.MESSAGE_NEW, onSocketMessage);
+        socket.on(CHAT_EVENTS.PRESENCE_UPDATE, onPresenceUpdate);
+        socket.on(CHAT_EVENTS.CONVERSATION_UPDATED, onConversationUpdate);
+
+        socketCleanup = () => {
+          socket.off(CHAT_EVENTS.MESSAGE_NEW, onSocketMessage);
+          socket.off(CHAT_EVENTS.PRESENCE_UPDATE, onPresenceUpdate);
+          socket.off(CHAT_EVENTS.CONVERSATION_UPDATED, onConversationUpdate);
+        };
+      } catch (e) {
+        console.warn('[chatService] WebSocket setup deferred:', e);
       }
-      chatService.fetchConversations(email).then((fresh) => {
-        onUpdate(fresh);
-      });
-    }, 1000);
+    }
+
+    // 5. Periodic heartbeat ping (every 30s) instead of 1000ms polling
+    chatService.sendHeartbeat(email);
+    const interval = setInterval(() => {
+      chatService.sendHeartbeat(email);
+    }, 30000);
 
     return () => {
       activeSubscribers.get(email)?.delete(onUpdate);
       clearInterval(interval);
+      if (socketCleanup) {
+        socketCleanup();
+      }
       if (bc) {
         bc.removeEventListener('message', handleBcMessage);
       }

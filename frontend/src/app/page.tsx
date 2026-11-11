@@ -25,6 +25,11 @@ import {
   sendBrowserNotification,
   isPageInBackground,
 } from '@/lib/browserNotifications';
+import { useChatSocket } from '@/features/chat/hooks/useChatSocket';
+import { useChatUiStore } from '@/stores/useChatUiStore';
+import { useConversationsQuery } from '@/features/chat/hooks/useConversationsQuery';
+import { useMessagesQuery } from '@/features/chat/hooks/useMessagesQuery';
+import { useChatMutations } from '@/features/chat/hooks/useChatMutations';
 
 export default function Home() {
   const router = useRouter();
@@ -40,7 +45,25 @@ export default function Home() {
 
   // Real-time conversations state
   const [conversations, setConversations] = useState<Conversation[]>([]);
-  const [activeConversationId, setActiveConversationId] = useState<string>('');
+  const {
+    activeConversationId: storeActiveConversationId,
+    setActiveConversationId: setStoreActiveConversationId,
+  } = useChatUiStore();
+  const [activeConversationId, setActiveConversationIdState] = useState<string>('');
+
+  const setActiveConversationId = (idOrUpdater: string | ((prev: string) => string)) => {
+    setActiveConversationIdState((prev) => {
+      const nextId = typeof idOrUpdater === 'function' ? idOrUpdater(prev) : idOrUpdater;
+      setStoreActiveConversationId(nextId || null);
+      return nextId;
+    });
+  };
+
+  // Connect authenticated WebSocket gateway for active room events
+  const { isConnected: isSocketConnected, typingUser } = useChatSocket(activeConversationId || null);
+  const conversationsQuery = useConversationsQuery();
+  const messagesQuery = useMessagesQuery(activeConversationId || null);
+  const chatMutations = useChatMutations();
   const [showDetailsSidebar, setShowDetailsSidebar] = useState(false);
   const [isStartChatModalOpen, setIsStartChatModalOpen] = useState(false);
   const [isEndModalOpen, setIsEndModalOpen] = useState(false);

@@ -54,8 +54,19 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
       if (!token) {
         this.logger.warn(`WS connection without token from ${client.id}`);
         // Allow connection in local dev if DEV_BYPASS or fallback exists, otherwise disconnect
-        const devEmail = (client.handshake?.auth?.email as string) || 'mailtosidharth.me@gmail.com';
-        const user = await this.authService.findUserByEmail(devEmail);
+        const devEmail = client.handshake?.auth?.email as string | undefined;
+        if (!devEmail) {
+          client.disconnect();
+          return;
+        }
+        let user = await this.authService.findUserByEmail(devEmail);
+        if (!user) {
+          user = await this.authService.resolveOrCreateUser({
+            uid: `dev-user-${devEmail.replace(/[^a-zA-Z0-9]/g, '_')}`,
+            email: devEmail,
+            name: devEmail.split('@')[0],
+          });
+        }
         if (user) {
           client.data.user = user;
         } else {

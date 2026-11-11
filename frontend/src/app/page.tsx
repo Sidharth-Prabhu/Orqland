@@ -35,7 +35,7 @@ export default function Home() {
   const router = useRouter();
   const { user, loading } = useAuth();
 
-  // Role verification: only mailtosidharth.me@gmail.com is the business; all other emails are clients
+  // Role verification: check if current authenticated user owns a business/workspace
   const isBusiness = isBusinessUser(user?.email);
 
   // Active view perspective is derived strictly from user role

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   Search,
   Building2,
@@ -35,6 +35,7 @@ export const StartChatModal: React.FC<StartChatModalProps> = ({
   onInitiate,
   isSubmitting = false,
 }) => {
+  const [businesses, setBusinesses] = useState<BusinessDirectoryItem[]>(BUSINESS_DIRECTORY);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedBusiness, setSelectedBusiness] = useState<BusinessDirectoryItem | null>(null);
   const [isCustomEmailMode, setIsCustomEmailMode] = useState(false);
@@ -44,6 +45,21 @@ export const StartChatModal: React.FC<StartChatModalProps> = ({
   const [otherServiceText, setOtherServiceText] = useState('');
   const [initialMessage, setInitialMessage] = useState('');
   const [error, setError] = useState<string | null>(null);
+
+  // Fetch dynamic businesses from server if available, falling back to BUSINESS_DIRECTORY
+  useEffect(() => {
+    if (!isOpen) return;
+    fetch('/api/chat/businesses')
+      .then((res) => res.json())
+      .then((data) => {
+        if (data?.data && Array.isArray(data.data) && data.data.length > 0) {
+          setBusinesses(data.data);
+        }
+      })
+      .catch(() => {
+        // keep default
+      });
+  }, [isOpen]);
 
   // Available services list based on selected business (or default fallback)
   const availableServices = useMemo(() => {
@@ -59,9 +75,9 @@ export const StartChatModal: React.FC<StartChatModalProps> = ({
   // Filter businesses in real time based on search query
   const filteredBusinesses = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    if (!q) return BUSINESS_DIRECTORY;
+    if (!q) return businesses;
 
-    return BUSINESS_DIRECTORY.filter((biz) => {
+    return businesses.filter((biz) => {
       return (
         biz.name.toLowerCase().includes(q) ||
         biz.email.toLowerCase().includes(q) ||
@@ -70,7 +86,7 @@ export const StartChatModal: React.FC<StartChatModalProps> = ({
         biz.services.some((s) => s.toLowerCase().includes(q))
       );
     });
-  }, [searchQuery]);
+  }, [searchQuery, businesses]);
 
   if (!isOpen) return null;
 

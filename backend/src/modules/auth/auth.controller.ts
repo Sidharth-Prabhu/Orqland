@@ -20,6 +20,12 @@ export class AuthController {
     return { success: true, data: user };
   }
 
+  @Get('businesses')
+  async getBusinesses() {
+    const businesses = this.authService.getBusinesses();
+    return { success: true, data: businesses };
+  }
+
   @Post('sync')
   async syncProfile(@Body() body: { email: string; name?: string; avatar?: string }) {
     const user = await this.authService.syncUserProfile(

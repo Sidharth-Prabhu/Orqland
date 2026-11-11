@@ -18,4 +18,5 @@ __exportStar(require("./models"), exports);
 __exportStar(require("./events"), exports);
 __exportStar(require("./dtos"), exports);
 __exportStar(require("./errors"), exports);
+__exportStar(require("./businesses"), exports);
 //# sourceMappingURL=index.js.map

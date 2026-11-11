@@ -4,6 +4,7 @@ import { users } from '../../infrastructure/database/schema';
 import { DecodedAuthToken } from './firebase-admin.service';
 import { eq, or } from 'drizzle-orm';
 import * as crypto from 'crypto';
+import { INITIAL_BUSINESSES, BusinessDirectoryItem } from '@orqland/contracts';
 
 export interface InternalUser {
   id: string; // internal ORQLAND UUID
@@ -21,26 +22,47 @@ export interface InternalUser {
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
   private inMemoryUsers = new Map<string, InternalUser>(); // Fallback in-memory map
+  private businessDirectory: BusinessDirectoryItem[] = [...INITIAL_BUSINESSES];
 
   constructor(private readonly dbService: DatabaseService) {
     this.seedDefaultUsers();
   }
 
   private seedDefaultUsers() {
-    const defaultBusiness: InternalUser = {
-      id: 'a0000000-0000-0000-0000-000000000001',
-      firebaseUid: 'biz-sidharth',
-      email: 'mailtosidharth.me@gmail.com',
-      name: "Sidharth Prabhu's Workspace",
-      handle: 'sidharth_workspace',
-      avatar: 'https://lh3.googleusercontent.com/a/ACg8ocK77osqTQ76zfsDwgj5r5kQZiKsBHRgjI-1NqrM62sChRVilDG5dA=s96-c',
-      role: 'business',
-      wsid: 'WS#ENOJEXBC#',
-      businessStatus: 'Open',
-    };
-    this.inMemoryUsers.set(defaultBusiness.email, defaultBusiness);
-    this.inMemoryUsers.set(defaultBusiness.id, defaultBusiness);
-    this.inMemoryUsers.set(defaultBusiness.firebaseUid, defaultBusiness);
+    // Seed all directory businesses as in-memory users
+    for (const biz of this.businessDirectory) {
+      const bizUser: InternalUser = {
+        id: biz.id,
+        firebaseUid: `biz-${biz.id}`,
+        email: biz.email.toLowerCase(),
+        name: biz.name,
+        handle: `@${biz.email.split('@')[0]}`,
+        avatar: biz.avatar,
+        role: 'business',
+        wsid: biz.wsid,
+        businessStatus: biz.status,
+      };
+      this.inMemoryUsers.set(bizUser.email, bizUser);
+      this.inMemoryUsers.set(bizUser.id, bizUser);
+      this.inMemoryUsers.set(bizUser.firebaseUid, bizUser);
+    }
+  }
+
+  getBusinesses(): BusinessDirectoryItem[] {
+    return this.businessDirectory;
+  }
+
+  isBusinessEmail(email: string): boolean {
+    const clean = (email || '').trim().toLowerCase();
+    const envBusinesses = (process.env.BUSINESS_EMAILS || process.env.BUSINESS_EMAIL || '')
+      .toLowerCase()
+      .split(',')
+      .map((e) => e.trim())
+      .filter(Boolean);
+
+    if (envBusinesses.includes(clean)) return true;
+
+    return this.businessDirectory.some((b) => b.email.toLowerCase() === clean);
   }
 
   /**
@@ -53,9 +75,8 @@ export class AuthService {
     const name = decoded.name?.trim() || email.split('@')[0] || 'User';
     const avatar = decoded.picture || '';
 
-    // Business identity rule: only mailtosidharth.me@gmail.com is business
-    const role: 'client' | 'business' =
-      email === 'mailtosidharth.me@gmail.com' ? 'business' : 'client';
+    // Dynamic Business identity rule: matches environment list or business directory
+    const role: 'client' | 'business' = this.isBusinessEmail(email) ? 'business' : 'client';
 
     if (this.dbService.isDbConnected()) {
       try {

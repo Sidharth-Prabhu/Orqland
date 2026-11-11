@@ -70,6 +70,11 @@ export class ChatResolver {
     };
   }
 
+  @Query(() => [UserProfileGql], { name: 'businesses' })
+  async getBusinesses(): Promise<any[]> {
+    return this.authService.getBusinesses();
+  }
+
   // =====================
   // MUTATIONS
   // =====================

@@ -269,9 +269,10 @@ export const chatService = {
   async syncUserProfile(email: string, name?: string | null, avatar?: string | null) {
     if (!email) return;
     try {
+      const headers = await getAuthHeaders(email);
       await fetch('/api/user/sync', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ email, name, avatar }),
       });
     } catch {
@@ -285,9 +286,10 @@ export const chatService = {
   async sendHeartbeat(email: string) {
     if (!email) return;
     try {
+      const headers = await getAuthHeaders(email);
       await fetch('/api/user/heartbeat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ email }),
       });
     } catch {}

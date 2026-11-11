@@ -18,15 +18,18 @@ export class NotificationsService {
   ) {}
 
   /**
-   * Register or refresh an FCM push token for a user
+   * Register or refresh an FCM push token for a user (and optionally associate with user's email)
    */
-  async registerToken(userId: string, token: string, deviceType = 'web'): Promise<void> {
+  async registerToken(userId: string, token: string, deviceType = 'web', userEmail?: string): Promise<void> {
     const now = Date.now();
 
     // 1. Save in Redis user tokens set
     const redisClient = this.redisService.getPubClient();
     if (this.redisService.isRedisConnected() && redisClient) {
       await redisClient.sadd(`fcm:tokens:${userId}`, token);
+      if (userEmail) {
+        await redisClient.sadd(`fcm:tokens:email:${userEmail.toLowerCase()}`, token);
+      }
     } else {
       let set = this.inMemoryTokens.get(userId);
       if (!set) {
@@ -34,6 +37,16 @@ export class NotificationsService {
         this.inMemoryTokens.set(userId, set);
       }
       set.add(token);
+
+      if (userEmail) {
+        const emailKey = `email:${userEmail.toLowerCase()}`;
+        let emailSet = this.inMemoryTokens.get(emailKey);
+        if (!emailSet) {
+          emailSet = new Set();
+          this.inMemoryTokens.set(emailKey, emailSet);
+        }
+        emailSet.add(token);
+      }
     }
 
     // 2. Persist in database
@@ -93,22 +106,34 @@ export class NotificationsService {
   }
 
   /**
-   * Retrieve all registered push tokens for a user
+   * Retrieve all registered push tokens for a user (or email)
    */
-  async getUserTokens(userId: string): Promise<string[]> {
-    const tokens: string[] = [];
+  async getUserTokens(userId: string, email?: string): Promise<string[]> {
+    const tokens: Set<string> = new Set();
 
     // Check Redis / Memory first
     const redisClient = this.redisService.getPubClient();
     if (this.redisService.isRedisConnected() && redisClient) {
       const redisTokens = await redisClient.smembers(`fcm:tokens:${userId}`);
       if (redisTokens && redisTokens.length > 0) {
-        return redisTokens;
+        redisTokens.forEach((t) => tokens.add(t));
+      }
+      if (email) {
+        const emailTokens = await redisClient.smembers(`fcm:tokens:email:${email.toLowerCase()}`);
+        if (emailTokens && emailTokens.length > 0) {
+          emailTokens.forEach((t) => tokens.add(t));
+        }
       }
     } else {
       const memTokens = this.inMemoryTokens.get(userId);
       if (memTokens && memTokens.size > 0) {
-        return Array.from(memTokens);
+        memTokens.forEach((t) => tokens.add(t));
+      }
+      if (email) {
+        const emailMemTokens = this.inMemoryTokens.get(`email:${email.toLowerCase()}`);
+        if (emailMemTokens && emailMemTokens.size > 0) {
+          emailMemTokens.forEach((t) => tokens.add(t));
+        }
       }
     }
 
@@ -122,14 +147,14 @@ export class NotificationsService {
           .where(eq(userPushTokens.userId, userId));
 
         for (const row of rows) {
-          tokens.push(row.token);
+          tokens.add(row.token);
         }
       } catch (err) {
         this.logger.error(`Failed to get push tokens for user ${userId}:`, err);
       }
     }
 
-    return tokens;
+    return Array.from(tokens);
   }
 
   /**
@@ -137,6 +162,7 @@ export class NotificationsService {
    */
   async sendPushNotification(params: {
     recipientUserId?: string;
+    recipientEmail?: string;
     recipientToken?: string;
     senderName: string;
     conversationId: string;
@@ -146,8 +172,8 @@ export class NotificationsService {
 
     if (params.recipientToken) {
       tokens.push(params.recipientToken);
-    } else if (params.recipientUserId) {
-      tokens = await this.getUserTokens(params.recipientUserId);
+    } else if (params.recipientUserId || params.recipientEmail) {
+      tokens = await this.getUserTokens(params.recipientUserId || '', params.recipientEmail);
     }
 
     if (tokens.length === 0) {

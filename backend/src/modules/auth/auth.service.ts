@@ -29,6 +29,20 @@ export class AuthService {
   }
 
   private seedDefaultUsers() {
+    // Seed default client user for dev environment
+    const defaultClient: InternalUser = {
+      id: 'u0000000-0000-0000-0000-000000000002',
+      firebaseUid: 'dev-user-ycssidharth_gmail_com',
+      email: 'ycssidharth@gmail.com',
+      name: 'Sidharth Prabhu',
+      handle: '@ycssidharth',
+      avatar: 'https://lh3.googleusercontent.com/a/ACg8ocLc1nCqvrP5EtodEm0Zq5cKvkrYEH-I0jaoX8bFrpvmR4FyQeUh=s96-c',
+      role: 'client',
+    };
+    this.inMemoryUsers.set(defaultClient.email.toLowerCase(), defaultClient);
+    this.inMemoryUsers.set(defaultClient.id, defaultClient);
+    this.inMemoryUsers.set(defaultClient.firebaseUid, defaultClient);
+
     // Seed all directory businesses as in-memory users
     for (const biz of this.businessDirectory) {
       const bizUser: InternalUser = {
@@ -42,7 +56,7 @@ export class AuthService {
         wsid: biz.wsid,
         businessStatus: biz.status,
       };
-      this.inMemoryUsers.set(bizUser.email, bizUser);
+      this.inMemoryUsers.set(bizUser.email.toLowerCase(), bizUser);
       this.inMemoryUsers.set(bizUser.id, bizUser);
       this.inMemoryUsers.set(bizUser.firebaseUid, bizUser);
     }
@@ -154,9 +168,15 @@ export class AuthService {
 
     // In-Memory Fallback for development without PostgreSQL
     let user =
-      this.inMemoryUsers.get(firebaseUid) || this.inMemoryUsers.get(email);
+      this.inMemoryUsers.get(firebaseUid) ||
+      this.inMemoryUsers.get(email.toLowerCase()) ||
+      this.inMemoryUsers.get(email);
     if (!user) {
-      const newId = crypto.randomUUID();
+      // If dev client email, map to default dev client ID
+      const newId =
+        email.toLowerCase() === 'ycssidharth@gmail.com'
+          ? 'u0000000-0000-0000-0000-000000000002'
+          : crypto.randomUUID();
       user = {
         id: newId,
         firebaseUid,
@@ -170,7 +190,11 @@ export class AuthService {
       };
       this.inMemoryUsers.set(newId, user);
       this.inMemoryUsers.set(firebaseUid, user);
+      this.inMemoryUsers.set(email.toLowerCase(), user);
       this.inMemoryUsers.set(email, user);
+    } else {
+      // Ensure mapped by firebaseUid as well if previously only mapped by email
+      this.inMemoryUsers.set(firebaseUid, user);
     }
     return user;
   }

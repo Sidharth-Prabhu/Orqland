@@ -25,7 +25,7 @@ export class NotificationsController {
       throw new BadRequestException('Valid FCM push token is required.');
     }
 
-    await this.notificationsService.registerToken(user.id, body.token.trim(), body.deviceType);
+    await this.notificationsService.registerToken(user.id, body.token.trim(), body.deviceType, user.email);
     return { success: true, message: 'Push token registered successfully.' };
   }
 

@@ -80,8 +80,11 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
       }
 
       const user: InternalUser = client.data.user;
-      // Join personal room for targeted alerts and cross-room events
+      // Join personal room and email room for targeted alerts and cross-room events
       await client.join(`user:${user.id}`);
+      if (user.email) {
+        await client.join(`user:email:${user.email.toLowerCase()}`);
+      }
 
       // Track online presence
       const becameOnline = await this.presenceService.trackConnection(user.id, client.id);
@@ -161,8 +164,10 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     try {
       const conv = await this.conversationsService.getConversation(createdMessage.conversationId, sender);
       const otherParticipantId = conv.clientId === sender.id ? conv.businessId : conv.clientId;
+      const otherParticipantEmail =
+        conv.clientId === sender.id ? conv.businessEmail : conv.clientEmail;
 
-      // 2. Broadcast to recipient personal room (guarantees delivery if recipient is minimized/in another tab)
+      // 2. Broadcast to recipient personal room & email room (guarantees delivery if recipient is minimized/in another tab)
       if (otherParticipantId) {
         this.server.to(`user:${otherParticipantId}`).emit(CHAT_EVENTS.MESSAGE_NEW, {
           ...createdMessage,
@@ -179,9 +184,18 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         this.server.to(`conversation:${createdMessage.conversationId}`).emit(CHAT_EVENTS.CONVERSATION_UPDATED, convUpdatePayload);
         this.server.to(`user:${otherParticipantId}`).emit(CHAT_EVENTS.CONVERSATION_UPDATED, convUpdatePayload);
 
+        if (otherParticipantEmail) {
+          this.server.to(`user:email:${otherParticipantEmail.toLowerCase()}`).emit(CHAT_EVENTS.MESSAGE_NEW, {
+            ...createdMessage,
+            isMe: false,
+          });
+          this.server.to(`user:email:${otherParticipantEmail.toLowerCase()}`).emit(CHAT_EVENTS.CONVERSATION_UPDATED, convUpdatePayload);
+        }
+
         // 4. Trigger push notification for other participant
         await this.notificationsService.sendPushNotification({
           recipientUserId: otherParticipantId,
+          recipientEmail: otherParticipantEmail,
           senderName: sender.name,
           conversationId: createdMessage.conversationId,
           hasAttachment: Boolean(createdMessage.attachments && createdMessage.attachments.length > 0),

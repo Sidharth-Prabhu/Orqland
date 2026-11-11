@@ -12,7 +12,14 @@ import {
 } from '@orqland/contracts';
 import { isPageInBackground, sendBrowserNotification } from '@/lib/browserNotifications';
 
-export function useChatSocket(activeConversationId: string | null) {
+interface UseChatSocketOptions {
+  onNewMessage?: (msg: ChatMessage) => void;
+}
+
+export function useChatSocket(
+  activeConversationId: string | null,
+  options?: UseChatSocketOptions
+) {
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const [isConnected, setIsConnected] = useState(false);
@@ -44,6 +51,9 @@ export function useChatSocket(activeConversationId: string | null) {
           ...newMsg,
           isMe: isFromMe,
         };
+
+        // Notify page state directly
+        options?.onNewMessage?.(msgWithMe);
 
         // Append to messages cache
         queryClient.setQueryData<PaginatedMessagesResponseDto>(

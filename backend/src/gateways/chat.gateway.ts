@@ -148,6 +148,50 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     await client.leave(`conversation:${payload.conversationId}`);
   }
 
+  /**
+   * Broadcast message to conversation and direct recipient user room, and trigger push notification
+   */
+  async broadcastNewMessage(createdMessage: ChatMessage, sender: InternalUser) {
+    // 1. Broadcast to conversation room
+    this.server.to(`conversation:${createdMessage.conversationId}`).emit(CHAT_EVENTS.MESSAGE_NEW, {
+      ...createdMessage,
+      isMe: false,
+    });
+
+    try {
+      const conv = await this.conversationsService.getConversation(createdMessage.conversationId, sender);
+      const otherParticipantId = conv.clientId === sender.id ? conv.businessId : conv.clientId;
+
+      // 2. Broadcast to recipient personal room (guarantees delivery if recipient is minimized/in another tab)
+      if (otherParticipantId) {
+        this.server.to(`user:${otherParticipantId}`).emit(CHAT_EVENTS.MESSAGE_NEW, {
+          ...createdMessage,
+          isMe: false,
+        });
+
+        // 3. Emit conversation updated event to conversation room and recipient user room
+        const convUpdatePayload = {
+          conversationId: createdMessage.conversationId,
+          lastMessage: createdMessage.content,
+          lastMessageTime: createdMessage.timestamp,
+          lastMessageTimestamp: createdMessage.createdAt,
+        };
+        this.server.to(`conversation:${createdMessage.conversationId}`).emit(CHAT_EVENTS.CONVERSATION_UPDATED, convUpdatePayload);
+        this.server.to(`user:${otherParticipantId}`).emit(CHAT_EVENTS.CONVERSATION_UPDATED, convUpdatePayload);
+
+        // 4. Trigger push notification for other participant
+        await this.notificationsService.sendPushNotification({
+          recipientUserId: otherParticipantId,
+          senderName: sender.name,
+          conversationId: createdMessage.conversationId,
+          hasAttachment: Boolean(createdMessage.attachments && createdMessage.attachments.length > 0),
+        });
+      }
+    } catch (e: any) {
+      this.logger.error(`Error in broadcastNewMessage: ${e?.message}`);
+    }
+  }
+
   @SubscribeMessage(CHAT_EVENTS.MESSAGE_SEND)
   async handleSendMessage(
     @ConnectedSocket() client: Socket,
@@ -175,41 +219,8 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         createdAt: createdMessage.createdAt,
       });
 
-      // 2. Broadcast message to conversation room AND direct recipient user room
-      this.server.to(`conversation:${payload.conversationId}`).emit(CHAT_EVENTS.MESSAGE_NEW, {
-        ...createdMessage,
-        isMe: false, // will be evaluated per receiver client
-      });
-
-      // Also emit to recipient's personal user room so they receive it in background or if not in active conversation room
-      const conv = await this.conversationsService.getConversation(payload.conversationId, user);
-      const otherParticipantId = conv.clientId === user.id ? conv.businessId : conv.clientId;
-      if (otherParticipantId) {
-        this.server.to(`user:${otherParticipantId}`).emit(CHAT_EVENTS.MESSAGE_NEW, {
-          ...createdMessage,
-          isMe: false,
-        });
-      }
-
-      // 3. Emit conversation updated event to conversation room and recipient user room
-      const convUpdatePayload = {
-        conversationId: payload.conversationId,
-        lastMessage: createdMessage.content,
-        lastMessageTime: createdMessage.timestamp,
-        lastMessageTimestamp: createdMessage.createdAt,
-      };
-      this.server.to(`conversation:${payload.conversationId}`).emit(CHAT_EVENTS.CONVERSATION_UPDATED, convUpdatePayload);
-      if (otherParticipantId) {
-        this.server.to(`user:${otherParticipantId}`).emit(CHAT_EVENTS.CONVERSATION_UPDATED, convUpdatePayload);
-      }
-
-      // 4. Trigger push notification for other participant
-      await this.notificationsService.sendPushNotification({
-        recipientUserId: otherParticipantId,
-        senderName: user.name,
-        conversationId: payload.conversationId,
-        hasAttachment: Boolean(payload.attachments && payload.attachments.length > 0),
-      });
+      // 2. Broadcast and notify via shared helper
+      await this.broadcastNewMessage(createdMessage, user);
     } catch (err: any) {
       this.logger.error(`Failed to handle message:send: ${err?.message}`);
       client.emit(CHAT_EVENTS.ERROR, {

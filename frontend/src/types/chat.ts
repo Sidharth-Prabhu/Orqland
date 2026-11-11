@@ -48,6 +48,7 @@ export interface ChatMessage {
   timestamp: string; // e.g. "10:42 AM"
   date: string; // e.g. "Today"
   createdAt?: number; // millisecond epoch for strict chronological ordering
+  idempotencyKey?: string;
   isMe?: boolean;
   status?: MessageDeliveryStatus;
   attachment?: ChatAttachment;

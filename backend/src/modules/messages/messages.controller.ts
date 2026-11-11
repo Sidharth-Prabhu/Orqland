@@ -10,17 +10,24 @@ import {
   UseGuards,
   HttpCode,
   HttpStatus,
+  Inject,
+  forwardRef,
 } from '@nestjs/common';
 import { MessagesService } from './messages.service';
 import { FirebaseAuthGuard } from '../../common/guards/firebase-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { InternalUser } from '../auth/auth.service';
 import { SendMessageDto } from '@orqland/contracts';
+import { ChatGateway } from '../../gateways/chat.gateway';
 
 @Controller('messages')
 @UseGuards(FirebaseAuthGuard)
 export class MessagesController {
-  constructor(private readonly messagesService: MessagesService) {}
+  constructor(
+    private readonly messagesService: MessagesService,
+    @Inject(forwardRef(() => ChatGateway))
+    private readonly chatGateway: ChatGateway
+  ) {}
 
   @Get()
   async getMessages(
@@ -46,6 +53,14 @@ export class MessagesController {
     @Body() dto: SendMessageDto
   ) {
     const data = await this.messagesService.sendMessage(user, dto);
+
+    // Broadcast in realtime to conversation room and direct recipient personal user room
+    try {
+      await this.chatGateway.broadcastNewMessage(data, user);
+    } catch (broadcastErr) {
+      console.warn('Realtime broadcast failed:', broadcastErr);
+    }
+
     return { success: true, data };
   }
 

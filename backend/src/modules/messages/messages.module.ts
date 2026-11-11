@@ -5,6 +5,8 @@ import { DatabaseModule } from '../../infrastructure/database/database.module';
 import { AuthModule } from '../auth/auth.module';
 import { ConversationsModule } from '../conversations/conversations.module';
 import { RedisModule } from '../../infrastructure/redis/redis.module';
+import { GatewaysModule } from '../../gateways/gateways.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
   imports: [
@@ -12,6 +14,8 @@ import { RedisModule } from '../../infrastructure/redis/redis.module';
     AuthModule,
     forwardRef(() => ConversationsModule),
     RedisModule,
+    forwardRef(() => GatewaysModule),
+    NotificationsModule,
   ],
   controllers: [MessagesController],
   providers: [MessagesService],

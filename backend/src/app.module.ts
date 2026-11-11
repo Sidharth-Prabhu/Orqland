@@ -11,7 +11,7 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
 import { ConversationsModule } from './modules/conversations/conversations.module';
 import { MessagesModule } from './modules/messages/messages.module';
 import { HealthModule } from './modules/health/health.module';
-import { ChatGateway } from './gateways/chat.gateway';
+import { GatewaysModule } from './gateways/gateways.module';
 import { ChatGraphqlModule } from './graphql/graphql.module';
 
 @Module({
@@ -31,8 +31,8 @@ import { ChatGraphqlModule } from './graphql/graphql.module';
     ConversationsModule,
     MessagesModule,
     HealthModule,
+    GatewaysModule,
     ChatGraphqlModule,
   ],
-  providers: [ChatGateway],
 })
 export class AppModule {}

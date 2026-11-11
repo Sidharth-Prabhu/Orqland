@@ -64,7 +64,30 @@ export default function Home() {
   }, [activeConversationId, setStoreActiveConversationId]);
 
   // Connect authenticated WebSocket gateway for active room events
-  const { isConnected: isSocketConnected, typingUser } = useChatSocket(activeConversationId || null);
+  const { isConnected: isSocketConnected, typingUser } = useChatSocket(activeConversationId || null, {
+    onNewMessage: (msg) => {
+      setConversations((prev) =>
+        prev.map((c) => {
+          if (c.id === msg.conversationId) {
+            const exists = c.messages.some((m) => m.id === msg.id || (m.idempotencyKey && m.idempotencyKey === msg.idempotencyKey));
+            const newMessages = exists
+              ? c.messages.map((m) => (m.id === msg.id || (m.idempotencyKey && m.idempotencyKey === msg.idempotencyKey) ? msg : m))
+              : [...c.messages, msg];
+            const isMe = msg.isMe;
+            return {
+              ...c,
+              lastMessage: msg.content,
+              lastMessageTime: msg.timestamp,
+              lastMessageTimestamp: msg.createdAt,
+              messages: newMessages,
+              unreadCount: c.id === activeConversationId || isMe ? 0 : (c.unreadCount || 0) + 1,
+            };
+          }
+          return c;
+        })
+      );
+    },
+  });
   const conversationsQuery = useConversationsQuery();
   const messagesQuery = useMessagesQuery(activeConversationId || null);
   const chatMutations = useChatMutations();

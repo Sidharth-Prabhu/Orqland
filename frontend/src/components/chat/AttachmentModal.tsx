@@ -29,7 +29,8 @@ interface SelectedItem {
 
 function buildFileAttachment(
   file: File,
-  base64Data: string,
+  url: string,
+  objectKey: string,
   fileType: 'image' | 'pdf',
   thumbnailUrl?: string
 ): ChatAttachment {
@@ -38,7 +39,8 @@ function buildFileAttachment(
     id: `att-${now}-${Math.random().toString(36).slice(2, 6)}`,
     type: fileType,
     name: file.name,
-    url: base64Data,
+    url,
+    objectKey,
     thumbnailUrl: thumbnailUrl || undefined,
     size: file.size,
     mimeType: file.type,
@@ -155,7 +157,7 @@ export const AttachmentModal: React.FC<AttachmentModalProps> = ({
             thumb = '';
           }
         }
-        return buildFileAttachment(item.file, uploadRes.url, item.type, thumb);
+        return buildFileAttachment(item.file, uploadRes.url, uploadRes.storagePath, item.type, thumb);
       });
 
       const attachments = await Promise.all(uploadPromises);

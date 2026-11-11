@@ -538,6 +538,7 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
               type: item.type,
               name: item.file.name,
               url: uploadRes.url,
+              objectKey: uploadRes.storagePath,
               thumbnailUrl: thumb || undefined,
               size: uploadRes.size,
               mimeType: uploadRes.mimeType,

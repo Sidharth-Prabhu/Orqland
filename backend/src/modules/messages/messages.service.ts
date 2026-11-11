@@ -282,11 +282,17 @@ export class MessagesService {
     const incomingAttachments: ChatAttachment[] = [];
     if (dto.attachments && dto.attachments.length > 0) {
       for (const att of dto.attachments) {
+        // Enforce no inline raw data URLs / bloated base64 strings in persistent database
+        if (att.url && att.url.startsWith('data:') && att.url.length > 2000) {
+          throw new BadRequestException('Inline base64 file payloads are prohibited. Upload via storage signed URL.');
+        }
+
         incomingAttachments.push({
           id: att.id || crypto.randomUUID(),
           type: att.type,
           name: att.name,
           url: att.url,
+          objectKey: att.objectKey || `attachments/${dto.conversationId}/${att.id || crypto.randomUUID()}/${att.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`,
           thumbnailUrl: att.thumbnailUrl,
           size: att.size,
           mimeType: att.mimeType,
@@ -296,11 +302,16 @@ export class MessagesService {
         });
       }
     } else if (dto.attachment) {
+      if (dto.attachment.url && dto.attachment.url.startsWith('data:') && dto.attachment.url.length > 2000) {
+        throw new BadRequestException('Inline base64 file payloads are prohibited. Upload via storage signed URL.');
+      }
+
       incomingAttachments.push({
         id: dto.attachment.id || crypto.randomUUID(),
         type: dto.attachment.type,
         name: dto.attachment.name,
         url: dto.attachment.url,
+        objectKey: dto.attachment.objectKey || `attachments/${dto.conversationId}/${dto.attachment.id || crypto.randomUUID()}/${dto.attachment.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`,
         thumbnailUrl: dto.attachment.thumbnailUrl,
         size: dto.attachment.size,
         mimeType: dto.attachment.mimeType,
@@ -357,7 +368,7 @@ export class MessagesService {
               messageId: messageId,
               type: att.type,
               name: att.name,
-              objectKey: att.id,
+              objectKey: att.objectKey || att.id,
               url: att.url,
               thumbnailUrl: att.thumbnailUrl || null,
               mimeType: att.mimeType || null,

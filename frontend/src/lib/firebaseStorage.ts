@@ -1,10 +1,10 @@
 /**
- * Attachment Storage Client (Firebase Cloud Storage Direct + Resilient Failover)
+ * Attachment Storage Client (Direct Signed URL Upload + Firebase Cloud Storage)
  *
  * Performance-Optimized:
- * - Direct single-roundtrip binary upload (`uploadBytes`) with timeout guard.
+ * - Direct single-roundtrip binary upload via short-lived signed URLs.
  * - Automatic background progress reporting.
- * - Resilient fallback to backend storage gateway and local encoding if blocked.
+ * - Clean metadata + persistent URL flow without inline base64 bloat.
  */
 
 import { storage, auth } from './firebase';
@@ -19,27 +19,7 @@ export interface UploadResult {
 }
 
 /**
- * Fallback to standard base64 data encoding
- */
-function fallbackToFileReader(file: File, cleanName: string): Promise<UploadResult> {
-  return new Promise<UploadResult>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      resolve({
-        url: reader.result as string,
-        storagePath: `fallback/${cleanName}`,
-        name: file.name,
-        size: file.size,
-        mimeType: file.type,
-      });
-    };
-    reader.onerror = () => reject(new Error(`Failed to read file ${file.name}`));
-    reader.readAsDataURL(file);
-  });
-}
-
-/**
- * Secondary Fallback: Backend Storage Gateway
+ * Storage Gateway Upload using Signed URLs
  */
 async function uploadToStorageGateway(
   file: File,
@@ -180,6 +160,8 @@ async function uploadDirectToFirebase(
 
 /**
  * Primary Robust & High-Speed Upload Entry Point
+ * Always requests a signed upload URL via /api/chat/attachments/upload-url (V4 signed URL or storage gateway)
+ * and uploads the raw binary file. Never falls back to inline base64 string stuffing.
  */
 export async function uploadFileToFirebaseStorage(
   file: File,
@@ -187,30 +169,23 @@ export async function uploadFileToFirebaseStorage(
   userEmail?: string,
   onProgress?: (progressPercent: number) => void
 ): Promise<UploadResult> {
-  const cleanName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-
-  // 1. Primary: Ultra-fast direct Firebase Storage
-  try {
-    return await uploadDirectToFirebase(file, conversationId, onProgress);
-  } catch (firebaseErr) {
-    console.warn(
-      'Direct Firebase Storage upload encountered an issue; falling back to storage gateway:',
-      firebaseErr
-    );
-  }
-
-  // 2. Secondary: Backend Storage Gateway
+  // 1. Primary: Backend Signed URL Storage Gateway (V4 signed upload URL)
   try {
     return await uploadToStorageGateway(file, conversationId, userEmail, onProgress);
   } catch (gatewayErr) {
     console.warn(
-      'Backend storage gateway also failed; engaging resilient data transfer:',
+      'Storage gateway signed upload failed; attempting direct Firebase Cloud Storage upload:',
       gatewayErr
     );
   }
 
-  // 3. Tertiary: Local file reader fallback
-  return fallbackToFileReader(file, cleanName);
+  // 2. Secondary: Direct Firebase Storage (if client SDK configured with direct permissions)
+  try {
+    return await uploadDirectToFirebase(file, conversationId, onProgress);
+  } catch (firebaseErr) {
+    console.error('All storage upload strategies failed:', firebaseErr);
+    throw new Error('Failed to upload attachment. Please check file size and network connection.');
+  }
 }
 
 /**

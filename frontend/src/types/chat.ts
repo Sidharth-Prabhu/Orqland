@@ -27,6 +27,7 @@ export interface ChatAttachment {
   type: AttachmentType;
   name: string;
   url: string;
+  objectKey?: string;
   thumbnailUrl?: string; // Rendered first-page thumbnail or preview image
   size?: number; // bytes
   mimeType?: string;

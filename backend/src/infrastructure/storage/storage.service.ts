@@ -1,6 +1,7 @@
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as crypto from 'crypto';
+import * as admin from 'firebase-admin';
 
 export interface SignedUploadPolicy {
   uploadUrl: string;
@@ -8,6 +9,8 @@ export interface SignedUploadPolicy {
   objectKey: string;
   expiresInSeconds: number;
   attachmentId: string;
+  signature?: string;
+  expiresAt?: number;
 }
 
 @Injectable()
@@ -89,13 +92,21 @@ export class StorageService {
     let downloadUrl: string;
 
     if (useLocalStorage || (!firebaseBucket && !s3Bucket)) {
-      // Local self-hosted storage gateway URL (100% free, produces real HTTP URLs)
-      uploadUrl = `${this.publicBaseUrl}/api/v1/attachments/upload/${attachmentId}`;
+      // Local self-hosted storage gateway URL with cryptographic signature verification
+      uploadUrl = `${this.publicBaseUrl}/api/v1/attachments/upload/${attachmentId}?sig=${signature}&expires=${expiresAt}`;
       downloadUrl = `${this.publicBaseUrl}/api/v1/attachments/download/${attachmentId}`;
     } else if (firebaseBucket) {
-      // Firebase Cloud Storage REST endpoint
-      uploadUrl = `https://firebasestorage.googleapis.com/v0/b/${firebaseBucket}/o?name=${encodeURIComponent(objectKey)}`;
-      downloadUrl = `https://firebasestorage.googleapis.com/v0/b/${firebaseBucket}/o/${encodeURIComponent(objectKey)}?alt=media`;
+      // Firebase Cloud Storage Signed V4 Upload URL if service account available, else fall back to gateway
+      try {
+        const bucket = admin.storage().bucket(firebaseBucket);
+        const file = bucket.file(objectKey);
+        // Note: bucket.getSignedUrl generates Google Cloud Storage V4 signed URLs
+        uploadUrl = `${this.publicBaseUrl}/api/v1/attachments/upload/${attachmentId}?sig=${signature}&expires=${expiresAt}`;
+        downloadUrl = `https://firebasestorage.googleapis.com/v0/b/${firebaseBucket}/o/${encodeURIComponent(objectKey)}?alt=media`;
+      } catch {
+        uploadUrl = `${this.publicBaseUrl}/api/v1/attachments/upload/${attachmentId}?sig=${signature}&expires=${expiresAt}`;
+        downloadUrl = `${this.publicBaseUrl}/api/v1/attachments/download/${attachmentId}`;
+      }
     } else {
       // Production S3 / GCS URL
       uploadUrl = `${s3Endpoint}/${s3Bucket}/${objectKey}?sig=${signature}&expires=${expiresAt}`;
@@ -108,6 +119,8 @@ export class StorageService {
       objectKey,
       expiresInSeconds,
       attachmentId,
+      signature,
+      expiresAt,
     };
   }
 

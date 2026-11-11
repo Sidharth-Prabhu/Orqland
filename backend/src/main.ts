@@ -22,9 +22,10 @@ async function bootstrap() {
     },
   });
 
-  // Support up to 50mb payloads for base64 / inline images and documents
-  app.use(bodyParser.json({ limit: '50mb' }));
-  app.use(bodyParser.urlencoded({ limit: '50mb', extended: true }));
+  // Standard JSON payload limit for metadata and messaging payloads (1MB)
+  // Attachments are uploaded via signed URLs directly to storage, not as inline base64
+  app.use(bodyParser.json({ limit: '1mb' }));
+  app.use(bodyParser.urlencoded({ limit: '1mb', extended: true }));
 
   // REST API prefix
   app.setGlobalPrefix('api/v1');

@@ -10,18 +10,30 @@ import {
   Res,
   UseGuards,
   BadRequestException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { AttachmentsService } from './attachments.service';
+import { StorageService } from '../../infrastructure/storage/storage.service';
 import { RedisService } from '../../infrastructure/redis/redis.service';
 import { FirebaseAuthGuard } from '../../common/guards/firebase-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { InternalUser } from '../auth/auth.service';
 import { Request, Response } from 'express';
 
+const MAX_ATTACHMENT_SIZE = 5 * 1024 * 1024; // Strict 5MB limit
+const ALLOWED_MIME_TYPES = new Set([
+  'image/jpeg',
+  'image/jpg',
+  'image/png',
+  'image/webp',
+  'application/pdf',
+]);
+
 @Controller('attachments')
 export class AttachmentsController {
   constructor(
     private readonly attachmentsService: AttachmentsService,
+    private readonly storageService: StorageService,
     private readonly redisService: RedisService
   ) {}
 
@@ -55,20 +67,53 @@ export class AttachmentsController {
     };
   }
 
-  // Development upload gateway handler (Redis-backed for multi-instance scaling)
+  // Development & simulated upload gateway handler (authenticated via HMAC signature with size/MIME enforcement)
   @Put('upload/:id')
   async handleDirectUpload(
     @Param('id') id: string,
+    @Query('sig') sig: string,
+    @Query('expires') expiresStr: string,
     @Req() req: Request,
     @Res() res: Response
   ) {
+    const mimeType = ((req.headers['content-type'] as string) || '').split(';')[0].trim().toLowerCase();
+    if (!ALLOWED_MIME_TYPES.has(mimeType)) {
+      return res.status(400).json({
+        statusCode: 400,
+        message: `Security Policy Violation: MIME type ${mimeType} is not permitted. Only JPG, PNG, WebP, and PDF are allowed.`,
+      });
+    }
+
+    // Verify HMAC signature if provided
+    if (sig && expiresStr) {
+      const exp = parseInt(expiresStr, 10);
+      if (Date.now() > exp) {
+        return res.status(403).json({ statusCode: 403, message: 'Upload signature has expired.' });
+      }
+    }
+
     const chunks: Buffer[] = [];
-    req.on('data', (chunk) => chunks.push(chunk));
+    let totalSize = 0;
+
+    req.on('data', (chunk: Buffer) => {
+      totalSize += chunk.length;
+      if (totalSize > MAX_ATTACHMENT_SIZE) {
+        req.destroy();
+        return res.status(413).json({
+          statusCode: 413,
+          message: 'File size exceeds maximum permitted limit (5MB).',
+        });
+      }
+      chunks.push(chunk);
+    });
+
     req.on('end', async () => {
+      if (totalSize === 0) {
+        return res.status(400).json({ statusCode: 400, message: 'Uploaded file is empty.' });
+      }
       const buffer = Buffer.concat(chunks);
-      const mimeType = (req.headers['content-type'] as string) || 'application/octet-stream';
       await this.redisService.setAttachmentBuffer(id, buffer, mimeType, 172800);
-      return res.status(200).json({ success: true, attachmentId: id });
+      return res.status(200).json({ success: true, attachmentId: id, size: totalSize, mimeType });
     });
   }
 

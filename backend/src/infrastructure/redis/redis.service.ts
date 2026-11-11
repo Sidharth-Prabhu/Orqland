@@ -258,6 +258,16 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  async deleteAttachmentBuffer(id: string): Promise<void> {
+    const key = `attachment:data:${id.trim()}`;
+    const metaKey = `attachment:meta:${id.trim()}`;
+    if (this.isConnected && this.pubClient) {
+      await this.pubClient.del(key, metaKey);
+    } else {
+      this.inMemoryFiles.delete(id);
+    }
+  }
+
   // ----------------------------------------------------
   // Distributed Rate Limiting (Sliding Window)
   // ----------------------------------------------------

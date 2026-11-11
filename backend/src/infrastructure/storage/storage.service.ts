@@ -136,4 +136,22 @@ export class StorageService {
       .digest('hex');
     return crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expectedSig));
   }
+
+  /**
+   * Delete object from underlying storage (Firebase Storage / S3 / Local Gateway)
+   */
+  async deleteObject(objectKey: string): Promise<boolean> {
+    const firebaseBucket = this.configService.get<string>('FIREBASE_STORAGE_BUCKET_ACTIVE');
+    if (firebaseBucket) {
+      try {
+        const bucket = admin.storage().bucket(firebaseBucket);
+        await bucket.file(objectKey).delete({ ignoreNotFound: true });
+        this.logger.log(`Deleted file from Firebase Storage: ${objectKey}`);
+        return true;
+      } catch (err: unknown) {
+        this.logger.warn(`Failed to delete file from Firebase Storage (${objectKey}):`, err);
+      }
+    }
+    return true;
+  }
 }

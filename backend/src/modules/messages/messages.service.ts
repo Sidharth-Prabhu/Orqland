@@ -616,4 +616,60 @@ export class MessagesService {
       }
     }
   }
+
+  /**
+   * Purge expired attachments (older than 48 hours)
+   * Called by the scheduled cron task
+   */
+  async purgeExpiredAttachments(): Promise<{ purgedCount: number }> {
+    const now = Date.now();
+    let purgedCount = 0;
+
+    // 1. Purge from in-memory fallback messages
+    for (const msg of this.inMemoryMessages) {
+      if (msg.attachment && msg.attachment.expiresAt <= now) {
+        msg.attachment.isExpired = true;
+        msg.attachment.url = '';
+        purgedCount++;
+      }
+      if (msg.attachments && msg.attachments.length > 0) {
+        for (const att of msg.attachments) {
+          if (att.expiresAt <= now) {
+            att.isExpired = true;
+            att.url = '';
+            purgedCount++;
+          }
+        }
+      }
+    }
+
+    // 2. Purge from PostgreSQL if connected
+    if (this.dbService.isDbConnected()) {
+      try {
+        const db = this.dbService.getDb();
+        const expiredRecords = await db
+          .select()
+          .from(messageAttachments)
+          .where(and(lt(messageAttachments.expiresAt, now), eq(messageAttachments.isExpired, false)));
+
+        if (expiredRecords.length > 0) {
+          for (const rec of expiredRecords) {
+            await db
+              .update(messageAttachments)
+              .set({
+                isExpired: true,
+                url: '',
+                uploadStatus: 'expired',
+              })
+              .where(eq(messageAttachments.id, rec.id));
+            purgedCount++;
+          }
+        }
+      } catch (err) {
+        this.logger.error('Failed to purge expired attachments in DB:', err);
+      }
+    }
+
+    return { purgedCount };
+  }
 }

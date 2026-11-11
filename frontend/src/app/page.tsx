@@ -54,10 +54,14 @@ export default function Home() {
   const setActiveConversationId = (idOrUpdater: string | ((prev: string) => string)) => {
     setActiveConversationIdState((prev) => {
       const nextId = typeof idOrUpdater === 'function' ? idOrUpdater(prev) : idOrUpdater;
-      setStoreActiveConversationId(nextId || null);
       return nextId;
     });
   };
+
+  // Synchronize store state safely outside of render phase
+  useEffect(() => {
+    setStoreActiveConversationId(activeConversationId || null);
+  }, [activeConversationId, setStoreActiveConversationId]);
 
   // Connect authenticated WebSocket gateway for active room events
   const { isConnected: isSocketConnected, typingUser } = useChatSocket(activeConversationId || null);

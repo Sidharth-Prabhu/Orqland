@@ -14,9 +14,18 @@ export class GlobalExceptionFilter implements ExceptionFilter {
   private readonly logger = new Logger(GlobalExceptionFilter.name);
 
   catch(exception: unknown, host: ArgumentsHost) {
+    // If GraphQL context, let GraphQL handle or rethrow
+    if ((host.getType() as string) === 'graphql') {
+      return exception;
+    }
+
     const ctx = host.switchToHttp();
     const response = ctx.getResponse<Response>();
     const request = ctx.getRequest<Request>();
+
+    if (!response || typeof response.status !== 'function') {
+      return exception;
+    }
 
     let status = HttpStatus.INTERNAL_SERVER_ERROR;
     let errorCode = ChatErrorCode.INTERNAL_ERROR;

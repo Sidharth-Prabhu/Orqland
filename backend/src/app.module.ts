@@ -11,6 +11,7 @@ import { ConversationsModule } from './modules/conversations/conversations.modul
 import { MessagesModule } from './modules/messages/messages.module';
 import { HealthModule } from './modules/health/health.module';
 import { ChatGateway } from './gateways/chat.gateway';
+import { ChatGraphqlModule } from './graphql/graphql.module';
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { ChatGateway } from './gateways/chat.gateway';
     ConversationsModule,
     MessagesModule,
     HealthModule,
+    ChatGraphqlModule,
   ],
   providers: [ChatGateway],
 })

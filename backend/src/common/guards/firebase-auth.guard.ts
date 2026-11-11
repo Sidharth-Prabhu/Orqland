@@ -4,6 +4,7 @@ import {
   ExecutionContext,
   UnauthorizedException,
 } from '@nestjs/common';
+import { GqlExecutionContext } from '@nestjs/graphql';
 import { FirebaseAdminService } from '../../modules/auth/firebase-admin.service';
 import { AuthService } from '../../modules/auth/auth.service';
 
@@ -15,10 +16,15 @@ export class FirebaseAuthGuard implements CanActivate {
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
-    const req = context.switchToHttp().getRequest();
-    const authHeader = req.headers.authorization;
-    const emailHeader = (req.headers['x-user-email'] as string | undefined)?.trim();
-    const bodyEmail = (req.body?.clientEmail || req.body?.email || req.body?.senderEmail) as string | undefined;
+    // Check if GraphQL context
+    let req = context.switchToHttp().getRequest();
+    if (!req || !req.headers) {
+      const gqlContext = GqlExecutionContext.create(context);
+      req = gqlContext.getContext()?.req;
+    }
+    const authHeader = req?.headers?.authorization;
+    const emailHeader = (req?.headers?.['x-user-email'] as string | undefined)?.trim();
+    const bodyEmail = (req?.body?.clientEmail || req?.body?.email || req?.body?.senderEmail) as string | undefined;
 
     // In development mode, provide a fallback if no auth token is attached yet
     if (!authHeader) {

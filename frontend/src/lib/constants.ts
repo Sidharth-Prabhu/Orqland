@@ -17,8 +17,8 @@ export const ALLOWED_MIME_TYPES = [
   ...ALLOWED_DOCUMENT_MIME_TYPES,
 ];
 
-// Attachment Retention Window (Temporary 30-minute testing window; revert to 48 hours later)
-export const ATTACHMENT_RETENTION_MS = 30 * 60 * 1000; // 30 minutes testing window (normally 48 * 60 * 60 * 1000)
+// 48-Hour Retention Window (in milliseconds)
+export const ATTACHMENT_RETENTION_MS = 48 * 60 * 60 * 1000; // 48 hours
 
 // Max upload size: 5 MB (if higher, compressed automatically)
 export const MAX_ATTACHMENT_SIZE_BYTES = 5 * 1024 * 1024;

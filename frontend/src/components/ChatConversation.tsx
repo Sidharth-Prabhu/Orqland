@@ -1531,7 +1531,7 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
                     <Clock size={12} className="text-indigo-600" />
                   </div>
                   <span className="leading-tight font-medium">
-                    Note: Shared media is securely stored for 30 minutes (testing window) and automatically deleted afterward.
+                    Note: Shared media is securely stored for 48 hours and automatically deleted afterward.
                   </span>
                 </div>
               </div>

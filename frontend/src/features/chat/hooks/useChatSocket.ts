@@ -38,7 +38,7 @@ export function useChatSocket(activeConversationId: string | null) {
       });
 
       // Handle incoming messages
-      socket.on(CHAT_EVENTS.MESSAGE_NEW, (newMsg: ChatMessage) => {
+      const handleMessageNew = (newMsg: ChatMessage) => {
         const isFromMe = newMsg.senderEmail === user?.email || newMsg.senderId === user?.uid;
         const msgWithMe: ChatMessage = {
           ...newMsg,
@@ -99,42 +99,40 @@ export function useChatSocket(activeConversationId: string | null) {
             conversationId: newMsg.conversationId,
           });
         }
-      });
+      };
 
       // Handle typing events
-      socket.on(
-        CHAT_EVENTS.TYPING_UPDATE,
-        (data: { conversationId: string; userId: string; userName: string; isTyping: boolean }) => {
-          if (data.conversationId === activeConversationId && data.userName !== user?.displayName) {
-            setTypingUser(data.isTyping ? data.userName : null);
-          }
+      const handleTypingUpdate = (data: { conversationId: string; userId: string; userName: string; isTyping: boolean }) => {
+        if (data.conversationId === activeConversationId && data.userName !== user?.displayName) {
+          setTypingUser(data.isTyping ? data.userName : null);
         }
-      );
+      };
 
       // Handle presence updates
-      socket.on(
-        CHAT_EVENTS.PRESENCE_UPDATE,
-        (data: { userId: string; userEmail: string; isOnline: boolean }) => {
-          queryClient.setQueryData<Conversation[]>(['conversations', user?.email], (old) => {
-            if (!old) return [];
-            return old.map((c) => {
-              if (
-                c.participant.email?.toLowerCase() === data.userEmail?.toLowerCase() ||
-                c.participant.id === data.userId
-              ) {
-                return {
-                  ...c,
-                  participant: {
-                    ...c.participant,
-                    isOnline: data.isOnline,
-                  },
-                };
-              }
-              return c;
-            });
+      const handlePresenceUpdate = (data: { userId: string; userEmail: string; isOnline: boolean }) => {
+        queryClient.setQueryData<Conversation[]>(['conversations', user?.email], (old) => {
+          if (!old) return [];
+          return old.map((c) => {
+            if (
+              c.participant.email?.toLowerCase() === data.userEmail?.toLowerCase() ||
+              c.participant.id === data.userId
+            ) {
+              return {
+                ...c,
+                participant: {
+                  ...c.participant,
+                  isOnline: data.isOnline,
+                },
+              };
+            }
+            return c;
           });
-        }
-      );
+        });
+      };
+
+      socket.on(CHAT_EVENTS.MESSAGE_NEW, handleMessageNew);
+      socket.on(CHAT_EVENTS.TYPING_UPDATE, handleTypingUpdate);
+      socket.on(CHAT_EVENTS.PRESENCE_UPDATE, handlePresenceUpdate);
 
       // Join the active conversation room
       if (activeConversationId) {
@@ -142,19 +140,22 @@ export function useChatSocket(activeConversationId: string | null) {
       }
 
       setIsConnected(socket.connected);
+
+      return () => {
+        if (activeConversationId && socket.connected) {
+          socket.emit(CHAT_EVENTS.CONVERSATION_LEAVE, { conversationId: activeConversationId });
+        }
+        socket.off(CHAT_EVENTS.MESSAGE_NEW, handleMessageNew);
+        socket.off(CHAT_EVENTS.TYPING_UPDATE, handleTypingUpdate);
+        socket.off(CHAT_EVENTS.PRESENCE_UPDATE, handlePresenceUpdate);
+      };
     }
 
-    initSocket();
+    let cleanupPromise: Promise<(() => void) | undefined> | undefined = initSocket();
 
     return () => {
       isSubscribed = false;
-      const socket = getChatSocket();
-      if (activeConversationId && socket.connected) {
-        socket.emit(CHAT_EVENTS.CONVERSATION_LEAVE, { conversationId: activeConversationId });
-      }
-      socket.off(CHAT_EVENTS.MESSAGE_NEW);
-      socket.off(CHAT_EVENTS.TYPING_UPDATE);
-      socket.off(CHAT_EVENTS.PRESENCE_UPDATE);
+      cleanupPromise?.then((cleanup) => cleanup?.());
     };
   }, [activeConversationId, user, queryClient]);
 

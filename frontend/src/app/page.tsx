@@ -542,11 +542,27 @@ export default function Home() {
       });
 
       // 2. Confirmed server update immediately replaces optimistic message
-      if (result?.conversation) {
-        setConversations((prev) =>
-          prev.map((c) => (c.id === result.conversation.id ? result.conversation : c))
-        );
-      }
+      const deliveredMsg = result?.message || { ...optimisticMessage, status: 'delivered' as const };
+      setConversations((prev) =>
+        prev.map((c) => {
+          if (c.id === activeConversation.id) {
+            return {
+              ...c,
+              messages: c.messages.map((m) =>
+                m.id === optimisticMessage.id
+                  ? {
+                      ...m,
+                      id: deliveredMsg.id || m.id,
+                      status: 'delivered' as const,
+                      createdAt: deliveredMsg.createdAt || m.createdAt,
+                    }
+                  : m
+              ),
+            };
+          }
+          return c;
+        })
+      );
     } catch (err: unknown) {
       console.error('Failed to send message:', err);
       // Mark as failed in UI if send failed

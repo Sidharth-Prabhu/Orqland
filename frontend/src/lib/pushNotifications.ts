@@ -29,10 +29,20 @@ export async function initializePushNotifications(userEmail?: string): Promise<s
     const registration = await navigator.serviceWorker.register('/firebase-messaging-sw.js');
     const messaging = getMessaging(app);
 
+    const vapidKey = process.env.NEXT_PUBLIC_FIREBASE_VAPID_KEY;
+    if (!vapidKey) {
+      console.warn(
+        '[FCM] NEXT_PUBLIC_FIREBASE_VAPID_KEY is not set. ' +
+        'FCM push tokens cannot be obtained. ' +
+        'Set it in .env.local to enable offline push notifications.'
+      );
+      return null;
+    }
+
     // Retrieve FCM Registration Token
     const token = await getToken(messaging, {
       serviceWorkerRegistration: registration,
-      vapidKey: process.env.NEXT_PUBLIC_FIREBASE_VAPID_KEY || undefined,
+      vapidKey,
     });
 
     if (token) {
@@ -51,9 +61,11 @@ export async function initializePushNotifications(userEmail?: string): Promise<s
       });
 
       return token;
+    } else {
+      console.warn('[FCM] getToken() returned an empty token. Verify VAPID key and Firebase project configuration.');
     }
   } catch (err) {
-    console.warn('Failed to initialize FCM push notifications:', err);
+    console.warn('[FCM] Failed to initialize push notifications:', err);
   }
 
   return null;

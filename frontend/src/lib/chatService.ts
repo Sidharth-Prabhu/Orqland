@@ -454,14 +454,26 @@ export const chatService = {
     }
 
     // Replace with confirmed server conversation and message
-    const updatedConv: Conversation = data.conversation || data.data?.conversation || data.data;
-    const confirmedMsg: ChatMessage = data.message || data.data?.message || optimisticMessage;
-    const latest = loadCachedConversations(senderEmail).map((c) =>
-      c.id === updatedConv.id ? updatedConv : c
-    );
-    saveCachedConversations(latest, senderEmail);
+    const confirmedMsg: ChatMessage = (data.data?.id ? data.data : data.message) || optimisticMessage;
+    const latestConvs = loadCachedConversations(senderEmail);
+    const convIdx = latestConvs.findIndex((c) => c.id === conversationId);
+    let targetConv: Conversation | null = null;
 
-    return { message: confirmedMsg, conversation: updatedConv };
+    if (convIdx >= 0) {
+      latestConvs[convIdx] = {
+        ...latestConvs[convIdx],
+        messages: latestConvs[convIdx].messages.map((m) =>
+          m.id === optimisticMessage.id ? { ...confirmedMsg, status: 'delivered', isMe: true } : m
+        ),
+      };
+      targetConv = latestConvs[convIdx];
+      saveCachedConversations(latestConvs, senderEmail);
+    }
+
+    // Cross-tab broadcast so other open tabs/windows update their view immediately
+    notifyCrossTab();
+
+    return { message: confirmedMsg, conversation: targetConv || (data.conversation as Conversation) };
   },
 
   /**

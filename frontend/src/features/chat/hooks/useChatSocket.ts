@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { getChatSocket } from '@/lib/socket/client';
 import { useAuth } from '@/context/AuthContext';
@@ -24,6 +24,9 @@ export function useChatSocket(
   const queryClient = useQueryClient();
   const [isConnected, setIsConnected] = useState(false);
   const [typingUser, setTypingUser] = useState<string | null>(null);
+
+  const optionsRef = useRef(options);
+  optionsRef.current = options;
 
   useEffect(() => {
     let token = '';
@@ -52,8 +55,8 @@ export function useChatSocket(
           isMe: isFromMe,
         };
 
-        // Notify page state directly
-        options?.onNewMessage?.(msgWithMe);
+        // Notify page state directly via latest ref
+        optionsRef.current?.onNewMessage?.(msgWithMe);
 
         // Append to messages cache
         queryClient.setQueryData<PaginatedMessagesResponseDto>(

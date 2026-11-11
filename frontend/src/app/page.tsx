@@ -80,12 +80,22 @@ export default function Home() {
               lastMessageTime: msg.timestamp,
               lastMessageTimestamp: msg.createdAt,
               messages: newMessages,
-              unreadCount: c.id === activeConversationId || isMe ? 0 : (c.unreadCount || 0) + 1,
+              unreadCount: (c.id === activeConversationId && !isPageInBackground()) || isMe ? 0 : (c.unreadCount || 0) + 1,
             };
           }
           return c;
         })
       );
+
+      // Trigger UI top toast if not from self
+      if (!msg.isMe) {
+        setActiveToast({
+          id: `${msg.conversationId}-${Date.now()}`,
+          conversationId: msg.conversationId,
+          senderName: msg.senderName,
+          count: 1,
+        });
+      }
     },
   });
   const conversationsQuery = useConversationsQuery();

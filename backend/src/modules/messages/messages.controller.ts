@@ -75,6 +75,11 @@ export class MessagesController {
       messageId: id,
       content: body.content,
     });
+    try {
+      this.chatGateway.broadcastMessageEdited(body.conversationId, data);
+    } catch (err) {
+      console.warn('Failed to broadcast message edit:', err);
+    }
     return { success: true, data };
   }
 
@@ -89,6 +94,11 @@ export class MessagesController {
       conversationId: body.conversationId,
       messageId: id,
     });
+    try {
+      this.chatGateway.broadcastMessageDeleted(body.conversationId, id);
+    } catch (err) {
+      console.warn('Failed to broadcast message deletion:', err);
+    }
     return { success: true, data };
   }
 }

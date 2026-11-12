@@ -332,15 +332,18 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
     e.preventDefault();
     e.stopPropagation();
 
-    const isSender = msg.senderEmail?.toLowerCase() === currentUserEmail.toLowerCase();
+    const isSender =
+      (msg.senderEmail && currentUserEmail && msg.senderEmail.toLowerCase() === currentUserEmail.toLowerCase()) ||
+      (msg.senderId && msg.senderId === currentUserEmail) ||
+      msg.isMe;
     const TEN_MINUTES_MS = 10 * 60 * 1000;
     const msgTime = msg.createdAt || 0;
     const isWithin10Mins = msgTime > 0 ? (currentTime - msgTime) <= TEN_MINUTES_MS : true;
     const FIFTEEN_MINUTES_MS = 15 * 60 * 1000;
     const isWithin15Mins = msgTime > 0 ? (currentTime - msgTime) <= FIFTEEN_MINUTES_MS : true;
 
-    const canEdit = isSender && isWithin10Mins && Boolean(onEditMessage) && !isChatEnded;
-    const canDelete = isSender && isWithin15Mins && Boolean(onDeleteMessage) && !isChatEnded;
+    const canEdit = Boolean(isSender && isWithin10Mins && Boolean(onEditMessage) && !isChatEnded);
+    const canDelete = Boolean(isSender && isWithin15Mins && Boolean(onDeleteMessage) && !isChatEnded);
 
     // Constrain position within viewport
     const menuWidth = 180;
@@ -524,12 +527,12 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
               currentUserEmail
             );
 
-            let thumb = item.previewUrl;
-            if (item.type === 'pdf' && (!thumb || thumb.startsWith('blob:'))) {
+            let thumb: string | undefined = undefined;
+            if (item.type === 'pdf') {
               try {
                 thumb = await generatePdfThumbnail(item.file);
               } catch {
-                thumb = '';
+                thumb = undefined;
               }
             }
 
@@ -1031,8 +1034,30 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
                           )}
                           {isMe && renderDeliveryStatus(msg.status)}
 
+                          {/* Sender Header actions (Edit / Delete buttons on hover) */}
+                          {onEditMessage && isMe && !isChatEnded && (() => {
+                            const TEN_MINUTES_MS = 10 * 60 * 1000;
+                            const msgTime = msg.createdAt || 0;
+                            const isWithin10Mins = msgTime > 0 ? (currentTime - msgTime) <= TEN_MINUTES_MS : true;
+                            if (!isWithin10Mins) return null;
+
+                            return (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditingMessageId(msg.id);
+                                  setEditingText(msg.content);
+                                }}
+                                className="opacity-0 group-hover:opacity-100 p-0.5 text-gray-400 hover:text-blue-700 hover:bg-blue-100/70 rounded transition-all cursor-pointer"
+                                title="Edit this message (available for 10 mins)"
+                              >
+                                <Pencil size={11} />
+                              </button>
+                            );
+                          })()}
+
                           {/* Delete individual chat message (Allowed only within 15 mins of sending, sender only) */}
-                          {onDeleteMessage && isMe && (() => {
+                          {onDeleteMessage && isMe && !isChatEnded && (() => {
                             const FIFTEEN_MINUTES_MS = 15 * 60 * 1000;
                             const msgTime = msg.createdAt || 0;
                             const isWithin15Mins = msgTime > 0 ? (currentTime - msgTime) <= FIFTEEN_MINUTES_MS : true;
@@ -1218,10 +1243,12 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
                                           >
                                             <ChatImageAttachment
                                               src={att.url || att.thumbnailUrl || ''}
+                                              fallbackUrl={att.url && att.url !== att.thumbnailUrl ? att.url : undefined}
                                               alt={att.name || 'Image'}
                                               fill
                                               sizes="(max-width: 640px) 100px, 120px"
                                               priority={idx < 4}
+                                              isSending={msg.status === 'sending'}
                                             />
                                             {/* WhatsApp-style subtle inner shadow/border overlay */}
                                             <div className="absolute inset-0 ring-1 ring-inset ring-black/10 rounded-lg pointer-events-none" />
@@ -1274,11 +1301,13 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
                                         title="Click to view larger image"
                                       >
                                         <ChatImageAttachment
-                                          src={singleAtt.url}
+                                          src={singleAtt.url || singleAtt.thumbnailUrl || ''}
+                                          fallbackUrl={singleAtt.url && singleAtt.url !== singleAtt.thumbnailUrl ? singleAtt.url : undefined}
                                           alt={singleAtt.name || 'Image'}
                                           width={320}
                                           height={200}
                                           priority
+                                          isSending={msg.status === 'sending'}
                                         />
                                         <div className="absolute inset-0 bg-black/0 group-hover/img:bg-black/20 transition-all flex items-center justify-center opacity-0 group-hover/img:opacity-100">
                                           <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-black/70 text-white text-[11px] font-bold backdrop-blur-xs shadow-lg transform translate-y-1 group-hover/img:translate-y-0 transition-all">

@@ -18,7 +18,16 @@ interface UseChatSocketOptions {
   onMessageEdited?: (data: { messageId: string; conversationId: string; content: string }) => void;
   onMessageDeleted?: (data: { messageId: string; conversationId: string }) => void;
   onMessageReadUpdate?: (data: { conversationId: string; readCount: number }) => void;
-  onConversationUpdated?: (data: { conversationId: string; lastMessage: string; lastMessageTime: string }) => void;
+  onConversationUpdated?: (data: {
+    conversationId: string;
+    lastMessage?: string;
+    lastMessageTime?: string;
+    lastMessageTimestamp?: number;
+    status?: 'active' | 'ended';
+    endedAt?: number | null;
+    endedBy?: string | null;
+    workspaceName?: string;
+  }) => void;
 }
 
 export function useChatSocket(
@@ -224,8 +233,17 @@ export function useChatSocket(
         });
       };
 
-      // Handle conversation summary update
-      const handleConversationUpdated = (data: { conversationId: string; lastMessage: string; lastMessageTime: string; lastMessageTimestamp?: number }) => {
+      // Handle conversation summary & status update
+      const handleConversationUpdated = (data: {
+        conversationId: string;
+        lastMessage?: string;
+        lastMessageTime?: string;
+        lastMessageTimestamp?: number;
+        status?: 'active' | 'ended';
+        endedAt?: number | null;
+        endedBy?: string | null;
+        workspaceName?: string;
+      }) => {
         optionsRef.current?.onConversationUpdated?.(data);
 
         queryClient.setQueryData<Conversation[]>(['conversations', user?.email], (old) => {
@@ -234,9 +252,20 @@ export function useChatSocket(
             c.id === data.conversationId
               ? {
                   ...c,
-                  lastMessage: data.lastMessage,
-                  lastMessageTime: data.lastMessageTime,
+                  ...(data.lastMessage !== undefined ? { lastMessage: data.lastMessage } : {}),
+                  ...(data.lastMessageTime !== undefined ? { lastMessageTime: data.lastMessageTime } : {}),
                   lastMessageTimestamp: data.lastMessageTimestamp || Date.now(),
+                  ...(data.status ? { status: data.status } : {}),
+                  ...(data.endedAt !== undefined ? { endedAt: data.endedAt || undefined } : {}),
+                  ...(data.endedBy !== undefined ? { endedBy: data.endedBy || undefined } : {}),
+                  ...(data.workspaceName
+                    ? {
+                        workspaceInfo: {
+                          ...c.workspaceInfo,
+                          name: data.workspaceName,
+                        },
+                      }
+                    : {}),
                 }
               : c
           );

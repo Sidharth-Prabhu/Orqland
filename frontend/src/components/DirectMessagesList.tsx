@@ -171,19 +171,11 @@ export const DirectMessagesList: React.FC<DirectMessagesListProps> = ({
                 {/* Contact Info and Message Preview */}
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between gap-1 mb-0.5">
-                    <div className="flex items-center gap-1.5 min-w-0">
-                      <span className="text-[13px] font-bold text-gray-900 truncate">
-                        {conv.participant.name}
-                      </span>
-                      {isEnded && (
-                        <span className="flex-shrink-0 flex items-center gap-0.5 text-[9px] font-bold px-1.5 py-0.2 bg-gray-100 text-gray-500 rounded">
-                          <Lock size={9} />
-                          <span>Ended</span>
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <span className="text-[10px] text-gray-400 flex-shrink-0 font-normal">
+                    <span className="text-[13px] font-bold text-gray-900 truncate block">
+                      {conv.participant.name}
+                    </span>
+                    <div className="flex items-center gap-1 flex-shrink-0">
+                      <span className="text-[10px] text-gray-400 font-normal">
                         {conv.lastMessageTime}
                       </span>
                       {/* Clear this chat separately button (Business & Client) */}
@@ -207,14 +199,22 @@ export const DirectMessagesList: React.FC<DirectMessagesListProps> = ({
                     <p className="text-[11px] line-clamp-1 leading-relaxed text-gray-400 font-normal min-w-0 flex-1">
                       {conv.workspaceInfo?.name || conv.bookingInfo?.serviceName || 'Technical Architecture'}
                     </p>
-                    {!isActive && (conv.unreadCount || 0) > 0 && (
-                      <div className="flex items-center gap-1 shrink-0 ml-1.5 px-1.5 py-0.5 bg-blue-50/90 border border-blue-200/60 rounded-full">
-                        <span className="w-1.5 h-1.5 rounded-full bg-blue-600 animate-pulse-dot" />
-                        <span className="text-[10px] font-bold text-blue-700 tracking-tight leading-none">
-                          New Message
+                    <div className="flex items-center gap-1.5 shrink-0 ml-1.5">
+                      {isEnded && (
+                        <span className="inline-flex items-center gap-0.5 text-[9px] font-semibold px-1.5 py-0.5 bg-gray-100 text-gray-500 rounded border border-gray-200/60 leading-none">
+                          <Lock size={8.5} />
+                          <span>Ended</span>
                         </span>
-                      </div>
-                    )}
+                      )}
+                      {!isActive && (conv.unreadCount || 0) > 0 && (
+                        <div className="flex items-center gap-1 px-1.5 py-0.5 bg-blue-50/90 border border-blue-200/60 rounded-full">
+                          <span className="w-1.5 h-1.5 rounded-full bg-blue-600 animate-pulse-dot" />
+                          <span className="text-[10px] font-bold text-blue-700 tracking-tight leading-none">
+                            New Message
+                          </span>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>

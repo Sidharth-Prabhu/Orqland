@@ -5,9 +5,16 @@ import { DatabaseModule } from '../../infrastructure/database/database.module';
 import { AuthModule } from '../auth/auth.module';
 import { PresenceModule } from '../presence/presence.module';
 import { MessagesModule } from '../messages/messages.module';
+import { GatewaysModule } from '../../gateways/gateways.module';
 
 @Module({
-  imports: [DatabaseModule, AuthModule, PresenceModule, forwardRef(() => MessagesModule)],
+  imports: [
+    DatabaseModule,
+    AuthModule,
+    PresenceModule,
+    forwardRef(() => MessagesModule),
+    forwardRef(() => GatewaysModule),
+  ],
   controllers: [ConversationsController],
   providers: [ConversationsService],
   exports: [ConversationsService],

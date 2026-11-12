@@ -33,12 +33,28 @@ import {
 } from '@orqland/contracts';
 import { eq, and, desc, sql, lt, gt } from 'drizzle-orm';
 import * as crypto from 'crypto';
+import * as fs from 'fs';
+import * as path from 'path';
 
 // 10-minute edit window & 15-minute delete window per specification
 const EDIT_WINDOW_MS = 10 * 60 * 1000;
 const DELETE_WINDOW_MS = 15 * 60 * 1000;
 // 48-hour attachment retention
 const ATTACHMENT_RETENTION_MS = 48 * 60 * 60 * 1000;
+
+function resolveDataDir(): string {
+  let curr = process.cwd();
+  for (let i = 0; i < 4; i++) {
+    if (fs.existsSync(path.join(curr, 'gryd.yaml'))) {
+      return path.join(curr, 'backend', '.data');
+    }
+    curr = path.dirname(curr);
+  }
+  return path.resolve(process.cwd(), '.data');
+}
+
+const DATA_DIR = resolveDataDir();
+const MESSAGES_FILE = path.join(DATA_DIR, 'messages.json');
 
 @Injectable()
 export class MessagesService {
@@ -53,7 +69,45 @@ export class MessagesService {
     @Inject(forwardRef(() => ConversationsService))
     private readonly conversationsService: ConversationsService
   ) {
-    this.seedDevMessages();
+    this.initDevMessages();
+  }
+
+  private initDevMessages() {
+    // In test environment, always start with fresh test seed data
+    if (process.env.NODE_ENV === 'test') {
+      this.seedDevMessages();
+      return;
+    }
+
+    try {
+      if (fs.existsSync(MESSAGES_FILE)) {
+        const raw = fs.readFileSync(MESSAGES_FILE, 'utf-8');
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          this.inMemoryMessages = parsed;
+          this.logger.log(`Loaded ${parsed.length} persisted messages from ${MESSAGES_FILE}`);
+          return;
+        }
+      }
+    } catch (err) {
+      this.logger.warn(`Failed reading persisted messages file: ${err}`);
+    }
+
+    // Default to empty message list for real users; no template mock messages
+    this.inMemoryMessages = [];
+    this.persistDevMessages();
+  }
+
+  private persistDevMessages() {
+    if (process.env.NODE_ENV === 'test') return;
+    try {
+      if (!fs.existsSync(DATA_DIR)) {
+        fs.mkdirSync(DATA_DIR, { recursive: true });
+      }
+      fs.writeFileSync(MESSAGES_FILE, JSON.stringify(this.inMemoryMessages, null, 2), 'utf-8');
+    } catch (err) {
+      this.logger.warn(`Failed saving persisted messages to disk: ${err}`);
+    }
   }
 
   private seedDevMessages() {
@@ -465,6 +519,7 @@ export class MessagesService {
     } else {
       // In-memory fallback
       this.inMemoryMessages.push(createdMessage);
+      this.persistDevMessages();
       this.conversationsService.updateInMemoryConversationLastMessage(
         dto.conversationId,
         dto.content || 'Attachment sent',
@@ -556,7 +611,11 @@ export class MessagesService {
     if (!msg) {
       throw new NotFoundException('Message not found.');
     }
-    if (msg.senderId !== user.id) {
+    const isSender =
+      msg.senderId === user.id ||
+      (user.email && msg.senderEmail && user.email.toLowerCase() === msg.senderEmail.toLowerCase()) ||
+      (user.name && msg.senderName && user.name.toLowerCase() === msg.senderName.toLowerCase());
+    if (!isSender) {
       throw new ForbiddenException('You can only edit your own messages.');
     }
     if (now - msg.createdAt > EDIT_WINDOW_MS) {
@@ -570,6 +629,7 @@ export class MessagesService {
     msg.content = dto.content;
     msg.isEdited = true;
     msg.editedAt = now;
+    this.persistDevMessages();
     return msg;
   }
 
@@ -642,7 +702,11 @@ export class MessagesService {
     if (!msg) {
       throw new NotFoundException('Message not found.');
     }
-    if (msg.senderId !== user.id) {
+    const isSender =
+      msg.senderId === user.id ||
+      (user.email && msg.senderEmail && user.email.toLowerCase() === msg.senderEmail.toLowerCase()) ||
+      (user.name && msg.senderName && user.name.toLowerCase() === msg.senderName.toLowerCase());
+    if (!isSender) {
       throw new ForbiddenException('You can only delete your own messages.');
     }
     if (now - msg.createdAt > DELETE_WINDOW_MS) {
@@ -655,6 +719,7 @@ export class MessagesService {
 
     msg.content = 'This message was deleted';
     msg.deletedForEveryone = true;
+    this.persistDevMessages();
     return msg;
   }
 
@@ -673,6 +738,7 @@ export class MessagesService {
    */
   addInMemoryMessage(msg: ChatMessage) {
     this.inMemoryMessages.push(msg);
+    this.persistDevMessages();
   }
 
   /**

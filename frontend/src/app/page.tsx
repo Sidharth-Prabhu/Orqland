@@ -145,9 +145,20 @@ export default function Home() {
           c.id === data.conversationId
             ? {
                 ...c,
-                lastMessage: data.lastMessage,
-                lastMessageTime: data.lastMessageTime,
+                ...(data.lastMessage !== undefined ? { lastMessage: data.lastMessage } : {}),
+                ...(data.lastMessageTime !== undefined ? { lastMessageTime: data.lastMessageTime } : {}),
                 lastMessageTimestamp: Date.now(),
+                ...(data.status ? { status: data.status } : {}),
+                ...(data.endedAt !== undefined ? { endedAt: data.endedAt || undefined } : {}),
+                ...(data.endedBy !== undefined ? { endedBy: data.endedBy || undefined } : {}),
+                ...(data.workspaceName
+                  ? {
+                      workspaceInfo: {
+                        ...c.workspaceInfo,
+                        name: data.workspaceName,
+                      },
+                    }
+                  : {}),
               }
             : c
         )
@@ -828,7 +839,20 @@ export default function Home() {
   const handleEndChat = async (conversationId: string) => {
     if (!user?.email || isBusiness) return;
     try {
-      await chatService.endChat(conversationId, user.email);
+      const updated = await chatService.endChat(conversationId, user.email);
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.id === conversationId
+            ? {
+                ...c,
+                ...(updated || {}),
+                status: 'ended',
+                endedAt: updated?.endedAt || Date.now(),
+                endedBy: (updated?.endedBy || user.uid || user.email) ?? undefined,
+              }
+            : c
+        )
+      );
     } catch (err) {
       console.error('End chat error:', err);
     }
@@ -838,7 +862,23 @@ export default function Home() {
   const handleReopenChat = async (conversationId: string, workspaceName?: string) => {
     if (!user?.email || isBusiness) return;
     try {
-      await chatService.reopenChat(conversationId, user.email, workspaceName);
+      const updated = await chatService.reopenChat(conversationId, user.email, workspaceName);
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.id === conversationId
+            ? {
+                ...c,
+                ...(updated || {}),
+                status: 'active',
+                endedAt: undefined,
+                endedBy: undefined,
+                workspaceInfo: workspaceName
+                  ? { ...c.workspaceInfo, name: workspaceName }
+                  : c.workspaceInfo,
+              }
+            : c
+        )
+      );
     } catch (err) {
       console.error('Reopen chat error:', err);
     }

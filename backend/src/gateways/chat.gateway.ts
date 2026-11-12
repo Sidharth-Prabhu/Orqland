@@ -237,12 +237,28 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   /**
    * Broadcast conversation updated event (e.g. ended, reopened, or updated)
+   * Broadcasts to conversation room as well as recipient and personal rooms so background clients receive instant sync
    */
-  broadcastConversationUpdated(conversationId: string, payload: any) {
+  async broadcastConversationUpdated(conversationId: string, payload: any) {
     this.server.to(`conversation:${conversationId}`).emit(CHAT_EVENTS.CONVERSATION_UPDATED, {
       conversationId,
       ...payload,
     });
+
+    try {
+      if (payload?.participantId) {
+        this.server.to(`user:${payload.participantId}`).emit(CHAT_EVENTS.CONVERSATION_UPDATED, {
+          conversationId,
+          ...payload,
+        });
+      }
+      if (payload?.participantEmail) {
+        this.server.to(`user:email:${payload.participantEmail.toLowerCase()}`).emit(CHAT_EVENTS.CONVERSATION_UPDATED, {
+          conversationId,
+          ...payload,
+        });
+      }
+    } catch {}
   }
 
   @SubscribeMessage(CHAT_EVENTS.MESSAGE_SEND)

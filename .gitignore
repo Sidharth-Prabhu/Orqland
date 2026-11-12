@@ -45,5 +45,9 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
+# local persistent state
+backend/.data/
+.data/
+
 # gryd
 gryd.yaml

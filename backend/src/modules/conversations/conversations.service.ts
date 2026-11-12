@@ -28,6 +28,22 @@ import {
 } from '@orqland/contracts';
 import { eq, and, desc, sql, or } from 'drizzle-orm';
 import * as crypto from 'crypto';
+import * as fs from 'fs';
+import * as path from 'path';
+
+function resolveDataDir(): string {
+  let curr = process.cwd();
+  for (let i = 0; i < 4; i++) {
+    if (fs.existsSync(path.join(curr, 'gryd.yaml'))) {
+      return path.join(curr, 'backend', '.data');
+    }
+    curr = path.dirname(curr);
+  }
+  return path.resolve(process.cwd(), '.data');
+}
+
+const DATA_DIR = resolveDataDir();
+const CONVERSATIONS_FILE = path.join(DATA_DIR, 'conversations.json');
 
 @Injectable()
 export class ConversationsService {
@@ -44,7 +60,45 @@ export class ConversationsService {
     @Inject(forwardRef(() => MessagesService))
     private readonly messagesService?: MessagesService
   ) {
-    this.seedDevConversations();
+    this.initDevConversations();
+  }
+
+  private initDevConversations() {
+    // In test environment, always start with fresh test seed data
+    if (process.env.NODE_ENV === 'test') {
+      this.seedDevConversations();
+      return;
+    }
+
+    try {
+      if (fs.existsSync(CONVERSATIONS_FILE)) {
+        const raw = fs.readFileSync(CONVERSATIONS_FILE, 'utf-8');
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          this.inMemoryConversations = parsed;
+          this.logger.log(`Loaded ${parsed.length} persisted conversations from ${CONVERSATIONS_FILE}`);
+          return;
+        }
+      }
+    } catch (err) {
+      this.logger.warn(`Failed reading persisted conversations file: ${err}`);
+    }
+
+    // Default to clean empty list for real users; no template mock chats
+    this.inMemoryConversations = [];
+    this.persistDevConversations();
+  }
+
+  private persistDevConversations() {
+    if (process.env.NODE_ENV === 'test') return;
+    try {
+      if (!fs.existsSync(DATA_DIR)) {
+        fs.mkdirSync(DATA_DIR, { recursive: true });
+      }
+      fs.writeFileSync(CONVERSATIONS_FILE, JSON.stringify(this.inMemoryConversations, null, 2), 'utf-8');
+    } catch (err) {
+      this.logger.warn(`Failed saving persisted conversations to disk: ${err}`);
+    }
   }
 
   private seedDevConversations() {
@@ -241,16 +295,12 @@ export class ConversationsService {
           if (isBiz) {
             return (
               c.businessEmail.toLowerCase() === email ||
-              c.businessId === user.id ||
-              ((email === 'mailtosidharth.me@gmail.com' || email === 'workspace.alpha@orqland.test') &&
-                (c.businessEmail === 'workspace.alpha@orqland.test' || c.businessEmail === 'mailtosidharth.me@gmail.com'))
+              c.businessId === user.id
             );
           }
           return (
             c.clientEmail.toLowerCase() === email ||
-            c.clientId === user.id ||
-            ((email === 'client1@orqland.test' || email === 'ycssidharth@gmail.com') &&
-              (c.clientEmail === 'client1@orqland.test' || c.clientEmail === 'ycssidharth@gmail.com'))
+            c.clientId === user.id
           );
         })
         .map(async (c) => {
@@ -481,6 +531,7 @@ export class ConversationsService {
     }
 
     this.inMemoryConversations.unshift(newConv);
+    this.persistDevConversations();
     return newConv;
   }
 
@@ -521,6 +572,7 @@ export class ConversationsService {
     conv.status = 'ended';
     conv.endedAt = now.getTime();
     conv.endedBy = user.id;
+    this.persistDevConversations();
     return conv;
   }
 
@@ -569,6 +621,7 @@ export class ConversationsService {
           name: dto.workspaceName,
         };
       }
+      this.persistDevConversations();
       return target;
     }
     conv.status = 'active';
@@ -582,6 +635,7 @@ export class ConversationsService {
         name: dto.workspaceName,
       };
     }
+    this.persistDevConversations();
     return conv;
   }
 
@@ -622,6 +676,7 @@ export class ConversationsService {
         target.deletedByBusiness = true;
         target.businessDeletedAt = now.getTime();
       }
+      this.persistDevConversations();
     }
     return conv;
   }
@@ -733,6 +788,7 @@ export class ConversationsService {
       } else {
         conv.unreadByClient = (conv.unreadByClient || 0) + 1;
       }
+      this.persistDevConversations();
     }
   }
 }

@@ -7,7 +7,7 @@ import { CHAT_EVENTS } from '@orqland/contracts';
 import { checkMessageRateLimit, checkGeneralRateLimit } from './rateLimiter';
 
 const CHANNEL_NAME = 'orqland_chat_channel';
-const STORAGE_PREFIX = 'orqland_cache_v4_';
+const STORAGE_PREFIX = 'orqland_user_chats_v1_';
 const TAB_ID = typeof window !== 'undefined' ? Math.random().toString(36).slice(2, 10) : 'server';
 
 async function getAuthHeaders(userEmail?: string): Promise<Record<string, string>> {
@@ -58,7 +58,7 @@ function getStorageKey(email?: string | null): string {
   return `${STORAGE_PREFIX}${norm || 'default'}`;
 }
 
-// Purge any bloated legacy cache entries (>1MB) from localStorage to keep browser quota clean
+// Purge legacy cache entries from older versions
 function purgeBloatedLocalStorage() {
   if (typeof window === 'undefined') return;
   try {
@@ -68,7 +68,11 @@ function purgeBloatedLocalStorage() {
       if (
         k &&
         (k.startsWith('orqland_conversations_cache') ||
-          k.startsWith('orqland_chat_cache'))
+          k.startsWith('orqland_chat_cache') ||
+          k.startsWith('orqland_cache_v4_') ||
+          k.startsWith('orqland_cache_v3_') ||
+          k.startsWith('orqland_cache_v2_') ||
+          k.startsWith('orqland_cache_v1_'))
       ) {
         keysToRemove.push(k);
       }
@@ -497,11 +501,13 @@ export const chatService = {
     }
 
     // Update local cache with cleared history conversation
-    const updatedConv: Conversation = data.conversation;
-    const latest = loadCachedConversations(userEmail).map((c) =>
-      c.id === updatedConv.id ? updatedConv : c
-    );
-    saveCachedConversations(latest, userEmail);
+    const updatedConv: Conversation = data.conversation || data.data;
+    if (updatedConv && updatedConv.id) {
+      const latest = loadCachedConversations(userEmail).map((c) =>
+        c.id === updatedConv.id ? updatedConv : c
+      );
+      saveCachedConversations(latest, userEmail);
+    }
     notifyCrossTab();
 
     return updatedConv;
@@ -546,11 +552,13 @@ export const chatService = {
       throw new Error(data.error || 'Failed to delete message.');
     }
 
-    const updatedConv: Conversation = data.conversation;
-    const latest = loadCachedConversations(userEmail).map((c) =>
-      c.id === updatedConv.id ? updatedConv : c
-    );
-    saveCachedConversations(latest, userEmail);
+    const updatedConv: Conversation = data.conversation || data.data;
+    if (updatedConv && updatedConv.id) {
+      const latest = loadCachedConversations(userEmail).map((c) =>
+        c.id === updatedConv.id ? updatedConv : c
+      );
+      saveCachedConversations(latest, userEmail);
+    }
     notifyCrossTab();
 
     return updatedConv;
@@ -577,11 +585,13 @@ export const chatService = {
       throw new Error(data.error || 'Failed to edit message.');
     }
 
-    const updatedConv: Conversation = data.conversation;
-    const latest = loadCachedConversations(userEmail).map((c) =>
-      c.id === updatedConv.id ? updatedConv : c
-    );
-    saveCachedConversations(latest, userEmail);
+    const updatedConv: Conversation = data.conversation || data.data;
+    if (updatedConv && updatedConv.id) {
+      const latest = loadCachedConversations(userEmail).map((c) =>
+        c.id === updatedConv.id ? updatedConv : c
+      );
+      saveCachedConversations(latest, userEmail);
+    }
     notifyCrossTab();
 
     return updatedConv;
@@ -603,11 +613,13 @@ export const chatService = {
       throw new Error(data.error || 'Failed to end chat.');
     }
 
-    const updatedConv: Conversation = data.conversation;
-    const latest = loadCachedConversations(userEmail).map((c) =>
-      c.id === updatedConv.id ? updatedConv : c
-    );
-    saveCachedConversations(latest, userEmail);
+    const updatedConv: Conversation = data.conversation || data.data;
+    if (updatedConv && updatedConv.id) {
+      const latest = loadCachedConversations(userEmail).map((c) =>
+        c.id === updatedConv.id ? updatedConv : c
+      );
+      saveCachedConversations(latest, userEmail);
+    }
     notifyCrossTab();
 
     return updatedConv;
@@ -629,11 +641,13 @@ export const chatService = {
       throw new Error(data.error || 'Failed to reopen chat.');
     }
 
-    const updatedConv: Conversation = data.conversation;
-    const latest = loadCachedConversations(userEmail).map((c) =>
-      c.id === updatedConv.id ? updatedConv : c
-    );
-    saveCachedConversations(latest, userEmail);
+    const updatedConv: Conversation = data.conversation || data.data;
+    if (updatedConv && updatedConv.id) {
+      const latest = loadCachedConversations(userEmail).map((c) =>
+        c.id === updatedConv.id ? updatedConv : c
+      );
+      saveCachedConversations(latest, userEmail);
+    }
     notifyCrossTab();
 
     return updatedConv;

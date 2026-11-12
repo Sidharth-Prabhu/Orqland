@@ -89,29 +89,45 @@ interface TypingPayload {
 Direct acknowledgement sent back to the message author.
 ```typescript
 interface MessageAckPayload {
-  clientGeneratedId: string;
-  messageId: string;
-  status: 'delivered' | 'failed';
-  createdAt: number;
+  success: boolean;
+  idempotencyKey: string;
+  messageId?: string;
+  conversationId: string;
+  timestamp: number;
+  error?: string;
+  errorCode?: string;
 }
 ```
 
 #### `message:new`
 Broadcast to all room members when a message is committed.
 ```typescript
-interface ChatMessage {
-  id: string;
+interface MessageNewPayload {
   conversationId: string;
-  senderId: string;
-  senderEmail?: string;
-  senderName: string;
-  senderAvatar: string;
+  message: ChatMessage;
+}
+```
+
+#### `message:edited`
+Broadcast to room when a message has been edited.
+```typescript
+interface MessageEditedPayload {
+  conversationId: string;
+  messageId: string;
   content: string;
-  timestamp: string;
-  date: string;
-  createdAt: number;
-  status: 'sending' | 'sent' | 'delivered' | 'read';
-  attachments?: ChatAttachment[];
+  isEdited: boolean;
+  editedAt: number;
+}
+```
+
+#### `message:deleted`
+Broadcast to room when a message has been deleted for everyone.
+```typescript
+interface MessageDeletedPayload {
+  conversationId: string;
+  messageId: string;
+  deletedForEveryone: boolean;
+  deletedAt: number;
 }
 ```
 
@@ -121,8 +137,10 @@ Broadcast to room when messages are read by a recipient.
 interface MessageReadUpdatePayload {
   conversationId: string;
   userId: string;
-  readAt: number;
+  userEmail?: string;
   lastReadMessageId?: string;
+  unreadCount?: number;
+  timestamp: number;
 }
 ```
 

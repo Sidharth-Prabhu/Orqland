@@ -19,9 +19,9 @@ describe('ChatGateway & Realtime Room Authorization', () => {
   const mockUser: InternalUser = {
     id: 'u0000000-0000-0000-0000-000000000002',
     firebaseUid: 'firebase-user-123',
-    email: 'ycssidharth@gmail.com',
+    email: 'client1@orqland.test',
     name: 'Sidharth Prabhu',
-    handle: '@ycssidharth',
+    handle: '@client1',
     avatar: 'https://example.com/avatar.jpg',
     role: 'client',
   };

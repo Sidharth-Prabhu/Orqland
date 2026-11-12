@@ -16,6 +16,7 @@ export interface SendMessageDto {
         type: AttachmentType;
         name: string;
         url: string;
+        objectKey?: string;
         thumbnailUrl?: string;
         size?: number;
         mimeType?: string;
@@ -31,6 +32,7 @@ export interface SendMessageDto {
         type: AttachmentType;
         name: string;
         url: string;
+        objectKey?: string;
         thumbnailUrl?: string;
         size?: number;
         mimeType?: string;

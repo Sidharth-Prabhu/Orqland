@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { ScheduleModule } from '@nestjs/schedule';
 import { DatabaseModule } from './infrastructure/database/database.module';
 import { RedisModule } from './infrastructure/redis/redis.module';
 import { StorageModule } from './infrastructure/storage/storage.module';
@@ -10,7 +11,8 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
 import { ConversationsModule } from './modules/conversations/conversations.module';
 import { MessagesModule } from './modules/messages/messages.module';
 import { HealthModule } from './modules/health/health.module';
-import { ChatGateway } from './gateways/chat.gateway';
+import { GatewaysModule } from './gateways/gateways.module';
+import { ChatGraphqlModule } from './graphql/graphql.module';
 
 @Module({
   imports: [
@@ -18,6 +20,7 @@ import { ChatGateway } from './gateways/chat.gateway';
       isGlobal: true,
       envFilePath: ['.env.local', '.env'],
     }),
+    ScheduleModule.forRoot(),
     DatabaseModule,
     RedisModule,
     StorageModule,
@@ -28,7 +31,8 @@ import { ChatGateway } from './gateways/chat.gateway';
     ConversationsModule,
     MessagesModule,
     HealthModule,
+    GatewaysModule,
+    ChatGraphqlModule,
   ],
-  providers: [ChatGateway],
 })
 export class AppModule {}

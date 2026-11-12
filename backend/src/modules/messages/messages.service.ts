@@ -4,14 +4,19 @@ import {
   NotFoundException,
   ForbiddenException,
   BadRequestException,
+  HttpException,
+  HttpStatus,
+  InternalServerErrorException,
   Inject,
   forwardRef,
 } from '@nestjs/common';
 import { DatabaseService } from '../../infrastructure/database/database.service';
+import { RedisService } from '../../infrastructure/redis/redis.service';
 import {
-  messages,
-  conversations,
-  messageAttachments,
+  chatMessages,
+  chatConversations,
+  chatMessageAttachments,
+  orqUsers,
 } from '../../infrastructure/database/schema';
 import { InternalUser } from '../auth/auth.service';
 import { ConversationsService } from '../conversations/conversations.service';
@@ -24,6 +29,7 @@ import {
   DeleteMessageDto,
   PaginatedMessagesResponseDto,
   ChatErrorCode,
+  detectSensitiveContent,
 } from '@orqland/contracts';
 import { eq, and, desc, sql, lt, gt } from 'drizzle-orm';
 import * as crypto from 'crypto';
@@ -40,11 +46,10 @@ export class MessagesService {
 
   // In-memory message store for development fallback
   private inMemoryMessages: ChatMessage[] = [];
-  // Idempotency cache: idempotencyKey -> ChatMessage
-  private idempotencyCache = new Map<string, ChatMessage>();
 
   constructor(
     private readonly dbService: DatabaseService,
+    private readonly redisService: RedisService,
     @Inject(forwardRef(() => ConversationsService))
     private readonly conversationsService: ConversationsService
   ) {
@@ -58,10 +63,10 @@ export class MessagesService {
         id: 'm0000000-0000-0000-0000-000000000001',
         conversationId: 'c0000000-0000-0000-0000-000000000001',
         senderId: 'u0000000-0000-0000-0000-000000000002',
-        senderEmail: 'ycssidharth@gmail.com',
-        senderName: 'Sidharth Prabhu',
-        senderAvatar: 'https://lh3.googleusercontent.com/a/ACg8ocLc1nCqvrP5EtodEm0Zq5cKvkrYEH-I0jaoX8bFrpvmR4FyQeUh=s96-c',
-        content: 'Hello! Checking in on the production architecture restructuring.',
+        senderEmail: 'client1@orqland.test',
+        senderName: 'Alice Client',
+        senderAvatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=128&h=128&fit=crop',
+        content: 'Hello! Inquiring about project kickoff and architecture alignment.',
         timestamp: '02:45 PM',
         date: 'Today',
         createdAt: now - 1800000,
@@ -71,10 +76,36 @@ export class MessagesService {
         id: 'm0000000-0000-0000-0000-000000000002',
         conversationId: 'c0000000-0000-0000-0000-000000000001',
         senderId: 'a0000000-0000-0000-0000-000000000001',
-        senderEmail: 'mailtosidharth.me@gmail.com',
-        senderName: "Sidharth Prabhu's Workspace",
-        senderAvatar: 'https://lh3.googleusercontent.com/a/ACg8ocK77osqTQ76zfsDwgj5r5kQZiKsBHRgjI-1NqrM62sChRVilDG5dA=s96-c',
-        content: 'Technical Architecture discussion is active. All systems proceeding.',
+        senderEmail: 'workspace.alpha@orqland.test',
+        senderName: 'Alpha Strategic Workspace',
+        senderAvatar: '',
+        content: 'Welcome! Direct communication channel is active. Let us know your requirements.',
+        timestamp: '02:51 PM',
+        date: 'Today',
+        createdAt: now - 1200000,
+        status: 'read',
+      },
+      {
+        id: 'm0000000-0000-0000-0000-000000000003',
+        conversationId: 'cccccccc-cccc-cccc-cccc-cccccccc0001',
+        senderId: '11111111-1111-1111-1111-111111111111',
+        senderEmail: 'client1@orqland.test',
+        senderName: 'Alice Client',
+        senderAvatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=128&h=128&fit=crop',
+        content: 'Hello! Inquiring about project kickoff and architecture alignment.',
+        timestamp: '02:45 PM',
+        date: 'Today',
+        createdAt: now - 1800000,
+        status: 'read',
+      },
+      {
+        id: 'm0000000-0000-0000-0000-000000000004',
+        conversationId: 'cccccccc-cccc-cccc-cccc-cccccccc0001',
+        senderId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+        senderEmail: 'workspace.alpha@orqland.test',
+        senderName: 'Alpha Strategic Workspace',
+        senderAvatar: '',
+        content: 'Welcome! Direct communication channel is active. Let us know your requirements.',
         timestamp: '02:51 PM',
         date: 'Today',
         createdAt: now - 1200000,
@@ -84,17 +115,15 @@ export class MessagesService {
   }
 
   /**
-   * DLP check: simple regex for sensitive content (Credit Card Numbers, SSNs)
+   * DLP check: comprehensive sensitive content detection
    */
   private checkDlp(content: string) {
-    const ccRegex = /\b(?:\d{4}[ -]?){3}(?:\d{4}|\d{1,3})\b/;
-    const ssnRegex = /\b\d{3}-\d{2}-\d{4}\b/;
-
-    if (ccRegex.test(content) || ssnRegex.test(content)) {
+    const result = detectSensitiveContent(content);
+    if (result.isBlocked) {
       throw new BadRequestException({
         statusCode: 400,
         errorCode: ChatErrorCode.SENSITIVE_CONTENT_BLOCKED,
-        message: 'Message blocked by Data Loss Prevention (DLP) policy: sensitive credentials or numbers detected.',
+        message: 'Message blocked by Data Loss Prevention (DLP) policy: sensitive credentials, financial details, or identity documents detected.',
       });
     }
   }
@@ -109,89 +138,98 @@ export class MessagesService {
     beforeTimestamp?: number
   ): Promise<PaginatedMessagesResponseDto> {
     const conv = await this.conversationsService.getConversation(conversationId, user);
-    const isBiz = user.role === 'business';
-    const deletedAt = isBiz ? conv.businessDeletedAt : conv.clientDeletedAt;
+    const isClient = user.id === conv.clientId;
+    const clearedBefore = isClient ? conv.clientDeletedAt : conv.businessDeletedAt;
 
     if (this.dbService.isDbConnected()) {
       try {
         const db = this.dbService.getDb();
-        const conditions = [eq(messages.conversationId, conversationId)];
+        const conditions = [eq(chatMessages.conversationId, conversationId)];
 
         if (beforeTimestamp) {
-          conditions.push(lt(messages.createdAt, beforeTimestamp));
-        }
-        if (deletedAt) {
-          conditions.push(gt(messages.createdAt, deletedAt));
+          conditions.push(lt(chatMessages.createdAt, new Date(beforeTimestamp)));
         }
 
-        const msgRecords = await db
-          .select()
-          .from(messages)
+        if (clearedBefore) {
+          conditions.push(gt(chatMessages.createdAt, new Date(clearedBefore)));
+        }
+
+        const rawMessages = await db
+          .select({
+            msg: chatMessages,
+            sender: orqUsers,
+          })
+          .from(chatMessages)
+          .leftJoin(orqUsers, eq(chatMessages.senderUserId, orqUsers.id))
           .where(and(...conditions))
-          .orderBy(desc(messages.createdAt))
+          .orderBy(desc(chatMessages.createdAt))
           .limit(limit + 1);
 
-        const hasMore = msgRecords.length > limit;
-        const sliced = hasMore ? msgRecords.slice(0, limit) : msgRecords;
+        const hasMore = rawMessages.length > limit;
+        const sliced = hasMore ? rawMessages.slice(0, limit) : rawMessages;
+        sliced.reverse(); // Chronological order
 
-        // Fetch attachments for these messages
-        const msgIds = sliced.map((m) => m.id);
-        const allAttachments =
-          msgIds.length > 0
-            ? await db
-                .select()
-                .from(messageAttachments)
-                .where(sql`${messageAttachments.messageId} IN ${msgIds}`)
-            : [];
-
+        const messageIds = sliced.map((r) => r.msg.id);
         const attachmentMap = new Map<string, ChatAttachment[]>();
-        for (const att of allAttachments) {
-          const list = attachmentMap.get(att.messageId) || [];
+
+        if (messageIds.length > 0) {
+          const rawAttachments = await db
+            .select()
+            .from(chatMessageAttachments)
+            .where(sql`${chatMessageAttachments.messageId} IN ${messageIds}`);
+
           const now = Date.now();
-          const loc = att.locationData as LocationData | null | undefined;
-          list.push({
-            id: att.id,
-            type: att.type as 'image' | 'pdf' | 'location',
-            name: att.name,
-            url: att.url,
-            downloadUrl: att.url,
-            thumbnailUrl: att.thumbnailUrl || undefined,
-            size: att.size || undefined,
-            mimeType: att.mimeType || undefined,
-            uploadedAt: att.createdAt,
-            expiresAt: att.expiresAt,
-            isExpired: now > att.expiresAt,
-            locationData: loc || undefined,
-          });
-          attachmentMap.set(att.messageId, list);
+          for (const att of rawAttachments) {
+            const isExpired = att.isExpired || (att.expiresAt && att.expiresAt.getTime() <= now);
+            const item: ChatAttachment = {
+              id: att.id,
+              type: att.attachmentType as any,
+              name: att.fileName,
+              url: isExpired ? '' : att.url,
+              objectKey: att.storageKey,
+              thumbnailUrl: att.thumbnailUrl || undefined,
+              size: att.sizeBytes || undefined,
+              mimeType: att.mimeType || undefined,
+              uploadedAt: att.createdAt.getTime(),
+              expiresAt: att.expiresAt.getTime(),
+              isExpired,
+              locationData: att.locationData as any,
+            };
+
+            const list = attachmentMap.get(att.messageId) || [];
+            list.push(item);
+            attachmentMap.set(att.messageId, list);
+          }
         }
 
-        const items: ChatMessage[] = sliced.reverse().map((m) => {
-          const isMe = m.senderId === user.id;
+        const items: ChatMessage[] = sliced.map((r) => {
+          const m = r.msg;
           const atts = attachmentMap.get(m.id) || [];
+          const createdAtNum = m.createdAt.getTime();
+          const timestampStr = new Date(createdAtNum).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
           return {
             id: m.id,
             conversationId: m.conversationId,
-            senderId: m.senderId,
-            senderEmail: isMe ? user.email : conv.participant.email,
-            senderName: isMe ? user.name : conv.participant.name,
-            senderAvatar: isMe ? user.avatar : conv.participant.avatar,
-            content: m.deletedForEveryone ? 'This message was deleted' : (m.content || ''),
-            timestamp: m.timestampDisplay,
-            date: m.dateDisplay || 'Today',
-            createdAt: m.createdAt,
-            idempotencyKey: m.idempotencyKey || undefined,
-            isMe,
-            status: (m.status as any) || 'delivered',
+            senderId: m.senderUserId,
+            senderEmail: r.sender?.email || undefined,
+            senderName: r.sender?.displayName || (m.senderSide === 'workspace' ? 'Workspace' : 'Client'),
+            senderAvatar: r.sender?.avatar || '',
+            content: m.deletedForEveryone ? 'This message was deleted' : m.content,
+            timestamp: timestampStr,
+            date: 'Today',
+            createdAt: createdAtNum,
+            isMe: m.senderUserId === user.id,
+            status: m.status as any,
             attachment: atts[0],
             attachments: atts,
             deletedForEveryone: m.deletedForEveryone,
             isEdited: m.isEdited,
-            editedAt: m.editedAt || undefined,
+            editedAt: m.editedAt ? m.editedAt.getTime() : undefined,
           };
         });
 
-        const nextCursor = hasMore && sliced.length > 0 ? sliced[0].id : undefined;
+        const nextCursor = hasMore && sliced.length > 0 ? sliced[0].msg.id : undefined;
 
         return {
           messages: items,
@@ -200,13 +238,14 @@ export class MessagesService {
         };
       } catch (err) {
         this.logger.error('Failed to query messages from DB:', err);
+        throw new InternalServerErrorException('Database failure while querying messages. Failed closed.');
       }
     }
 
     // In-memory fallback
     let list = this.inMemoryMessages.filter((m) => m.conversationId === conversationId);
-    if (deletedAt) {
-      list = list.filter((m) => m.createdAt > deletedAt);
+    if (clearedBefore) {
+      list = list.filter((m) => m.createdAt > clearedBefore);
     }
     if (beforeTimestamp) {
       list = list.filter((m) => m.createdAt < beforeTimestamp);
@@ -227,15 +266,28 @@ export class MessagesService {
   }
 
   /**
-   * Send a new message with idempotency and session lifecycle check
+   * Send a new message with idempotency, rate limiting, and DLP check
    */
   async sendMessage(
     user: InternalUser,
     dto: SendMessageDto
   ): Promise<ChatMessage> {
-    const conv = await this.conversationsService.getConversation(dto.conversationId, user);
+    // 1. Distributed rate limit: 60 messages / minute per user
+    const rateLimit = await this.redisService.checkRateLimit(user.id, 60, 60);
+    if (!rateLimit.allowed) {
+      throw new HttpException(
+        {
+          statusCode: HttpStatus.TOO_MANY_REQUESTS,
+          errorCode: ChatErrorCode.RATE_LIMIT_EXCEEDED,
+          message: `Rate limit exceeded. Please wait ${rateLimit.retryAfterSeconds || 1}s before sending more messages.`,
+          retryAfterSeconds: rateLimit.retryAfterSeconds,
+        },
+        HttpStatus.TOO_MANY_REQUESTS
+      );
+    }
 
-    // Enforce active session
+    // 2. Access and active session check
+    const conv = await this.conversationsService.getConversation(dto.conversationId, user);
     if (conv.status === 'ended') {
       throw new ForbiddenException({
         statusCode: 403,
@@ -244,32 +296,41 @@ export class MessagesService {
       });
     }
 
-    // Enforce idempotency key deduplication
+    // 3. Distributed idempotency check
     if (dto.idempotencyKey) {
-      if (this.idempotencyCache.has(dto.idempotencyKey)) {
-        this.logger.log(`Idempotency hit for key ${dto.idempotencyKey}; returning existing message.`);
-        return this.idempotencyCache.get(dto.idempotencyKey)!;
+      const cached = await this.redisService.getIdempotentMessage<ChatMessage>(dto.idempotencyKey);
+      if (cached) {
+        this.logger.log(`Distributed idempotency hit for key ${dto.idempotencyKey}; returning existing message.`);
+        return cached;
       }
     }
 
-    // Check DLP
+    // 4. Server-Side DLP enforcement
     if (dto.content) {
       this.checkDlp(dto.content);
     }
 
     const now = Date.now();
-    const timeString = new Date(now).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const nowDate = new Date(now);
+    const timeString = nowDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     const messageId = crypto.randomUUID();
+    const isClient = user.id === conv.clientId;
+    const senderSide = isClient ? 'client' : 'workspace';
 
     // Process attachments list
     const incomingAttachments: ChatAttachment[] = [];
     if (dto.attachments && dto.attachments.length > 0) {
       for (const att of dto.attachments) {
+        if (att.url && att.url.startsWith('data:') && att.url.length > 2000) {
+          throw new BadRequestException('Inline base64 file payloads are prohibited. Upload via storage signed URL.');
+        }
+
         incomingAttachments.push({
           id: att.id || crypto.randomUUID(),
           type: att.type,
           name: att.name,
           url: att.url,
+          objectKey: att.objectKey || `chat/${dto.conversationId}/${att.id || crypto.randomUUID()}-${att.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`,
           thumbnailUrl: att.thumbnailUrl,
           size: att.size,
           mimeType: att.mimeType,
@@ -279,11 +340,16 @@ export class MessagesService {
         });
       }
     } else if (dto.attachment) {
+      if (dto.attachment.url && dto.attachment.url.startsWith('data:') && dto.attachment.url.length > 2000) {
+        throw new BadRequestException('Inline base64 file payloads are prohibited. Upload via storage signed URL.');
+      }
+
       incomingAttachments.push({
         id: dto.attachment.id || crypto.randomUUID(),
         type: dto.attachment.type,
         name: dto.attachment.name,
         url: dto.attachment.url,
+        objectKey: dto.attachment.objectKey || `chat/${dto.conversationId}/${dto.attachment.id || crypto.randomUUID()}-${dto.attachment.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`,
         thumbnailUrl: dto.attachment.thumbnailUrl,
         size: dto.attachment.size,
         mimeType: dto.attachment.mimeType,
@@ -293,7 +359,7 @@ export class MessagesService {
       });
     }
 
-    const createdMsg: ChatMessage = {
+    const createdMessage: ChatMessage = {
       id: messageId,
       conversationId: dto.conversationId,
       senderId: user.id,
@@ -304,98 +370,119 @@ export class MessagesService {
       timestamp: timeString,
       date: 'Today',
       createdAt: now,
-      idempotencyKey: dto.idempotencyKey,
       isMe: true,
       status: 'delivered',
       attachment: incomingAttachments[0],
       attachments: incomingAttachments,
-      deletedForEveryone: false,
-      isEdited: false,
+      idempotencyKey: dto.idempotencyKey,
     };
 
     if (this.dbService.isDbConnected()) {
       try {
         const db = this.dbService.getDb();
-        const isBiz = user.role === 'business';
 
-        // Transactional insert: message + attachments + update conversation summary
-        await db.transaction(async (tx) => {
-          await tx.insert(messages).values({
-            id: messageId,
-            conversationId: dto.conversationId,
-            senderId: user.id,
-            content: createdMsg.content,
-            timestampDisplay: timeString,
-            dateDisplay: 'Today',
-            idempotencyKey: dto.idempotencyKey || null,
-            status: 'delivered',
-            isEdited: false,
-            deletedForEveryone: false,
-            createdAt: now,
-          });
-
-          for (const att of incomingAttachments) {
-            await tx.insert(messageAttachments).values({
-              id: att.id,
-              messageId: messageId,
-              type: att.type,
-              name: att.name,
-              objectKey: att.id,
-              url: att.url,
-              thumbnailUrl: att.thumbnailUrl || null,
-              mimeType: att.mimeType || null,
-              size: att.size || null,
-              locationData: att.locationData || null,
-              expiresAt: att.expiresAt,
-              isExpired: false,
-              createdAt: now,
-            });
-          }
-
-          // Update conversation last message and unread count
-          await tx
-            .update(conversations)
-            .set({
-              lastMessageText: createdMsg.content,
-              lastMessageTime: timeString,
-              lastMessageTimestamp: now,
-              unreadByClient: isBiz ? sql`${conversations.unreadByClient} + 1` : conversations.unreadByClient,
-              unreadByBusiness: !isBiz ? sql`${conversations.unreadByBusiness} + 1` : conversations.unreadByBusiness,
-              updatedAt: new Date(),
-            })
-            .where(eq(conversations.id, dto.conversationId));
+        // Database insert of chat message
+        await db.insert(chatMessages).values({
+          id: messageId,
+          conversationId: dto.conversationId,
+          senderUserId: user.id,
+          senderSide,
+          content: dto.content || '',
+          messageType: incomingAttachments.length > 0 ? (incomingAttachments[0].type === 'location' ? 'location' : 'media') : 'text',
+          idempotencyKey: dto.idempotencyKey || crypto.randomUUID(),
+          status: 'delivered',
+          createdAt: nowDate,
         });
 
-        if (dto.idempotencyKey) {
-          this.idempotencyCache.set(dto.idempotencyKey, createdMsg);
+        // Insert attachments if present
+        if (incomingAttachments.length > 0) {
+          for (const att of incomingAttachments) {
+            await db.insert(chatMessageAttachments).values({
+              id: att.id,
+              messageId,
+              attachmentType: att.type,
+              fileName: att.name,
+              mimeType: att.mimeType,
+              sizeBytes: att.size,
+              storageKey: att.objectKey || `chat/${dto.conversationId}/${att.id}-${att.name}`,
+              url: att.url,
+              thumbnailUrl: att.thumbnailUrl,
+              locationData: att.locationData,
+              expiresAt: new Date(att.expiresAt),
+              createdAt: nowDate,
+            });
+          }
         }
 
-        return createdMsg;
-      } catch (err) {
-        this.logger.error('Failed to insert message into DB:', err);
+        // Update conversation summary & unread counters
+        await db
+          .update(chatConversations)
+          .set({
+            lastMessagePreview: dto.content || 'Attachment sent',
+            lastMessageAt: nowDate,
+            updatedAt: nowDate,
+            unreadByClient: isClient ? undefined : sql`${chatConversations.unreadByClient} + 1`,
+            unreadByWorkspace: isClient ? sql`${chatConversations.unreadByWorkspace} + 1` : undefined,
+          })
+          .where(eq(chatConversations.id, dto.conversationId));
+      } catch (err: any) {
+        // If PostgreSQL unique constraint on idempotency fails, return existing message
+        if (err?.code === '23505' && dto.idempotencyKey) {
+          const db = this.dbService.getDb();
+          const existing = await db
+            .select()
+            .from(chatMessages)
+            .where(
+              and(
+                eq(chatMessages.conversationId, dto.conversationId),
+                eq(chatMessages.idempotencyKey, dto.idempotencyKey)
+              )
+            )
+            .limit(1);
+
+          if (existing.length > 0) {
+            const em = existing[0];
+            return {
+              id: em.id,
+              conversationId: em.conversationId,
+              senderId: em.senderUserId,
+              senderName: user.name,
+              senderAvatar: user.avatar,
+              content: em.content,
+              timestamp: timeString,
+              date: 'Today',
+              createdAt: em.createdAt.getTime(),
+              isMe: true,
+              status: em.status as any,
+              idempotencyKey: em.idempotencyKey,
+            };
+          }
+        }
+
+        this.logger.error('Failed to persist message in DB:', err);
+        throw new InternalServerErrorException('Database failure while sending message. Failed closed.');
       }
+    } else {
+      // In-memory fallback
+      this.inMemoryMessages.push(createdMessage);
+      this.conversationsService.updateInMemoryConversationLastMessage(
+        dto.conversationId,
+        dto.content || 'Attachment sent',
+        now,
+        user.role
+      );
     }
 
-    // In-memory fallback
-    this.inMemoryMessages.push(createdMsg);
+    // Save in Redis idempotency cache for 30s
     if (dto.idempotencyKey) {
-      this.idempotencyCache.set(dto.idempotencyKey, createdMsg);
+      await this.redisService.setIdempotentMessage(dto.idempotencyKey, createdMessage, 30);
     }
 
-    // Update the conversation's last message, timestamp, and unread counters in in-memory mode
-    this.conversationsService.updateInMemoryConversationLastMessage(
-      dto.conversationId,
-      createdMsg.content,
-      now,
-      timeString,
-      user.role === 'business'
-    );
-
-    return createdMsg;
+    return createdMessage;
   }
 
   /**
-   * Edit a message within the 10-minute window
+   * Edit a message within the strict 10-minute window (sender only)
    */
   async editMessage(user: InternalUser, dto: EditMessageDto): Promise<ChatMessage> {
     const now = Date.now();
@@ -406,8 +493,8 @@ export class MessagesService {
         const db = this.dbService.getDb();
         const existing = await db
           .select()
-          .from(messages)
-          .where(and(eq(messages.id, dto.messageId), eq(messages.conversationId, dto.conversationId)))
+          .from(chatMessages)
+          .where(and(eq(chatMessages.id, dto.messageId), eq(chatMessages.conversationId, dto.conversationId)))
           .limit(1);
 
         if (existing.length === 0) {
@@ -415,11 +502,11 @@ export class MessagesService {
         }
 
         const msg = existing[0];
-        if (msg.senderId !== user.id) {
+        if (msg.senderUserId !== user.id) {
           throw new ForbiddenException('You can only edit your own messages.');
         }
 
-        if (now - msg.createdAt > EDIT_WINDOW_MS) {
+        if (now - msg.createdAt.getTime() > EDIT_WINDOW_MS) {
           throw new BadRequestException({
             statusCode: 400,
             errorCode: ChatErrorCode.MESSAGE_EDIT_EXPIRED,
@@ -427,25 +514,30 @@ export class MessagesService {
           });
         }
 
+        if (msg.deletedForEveryone) {
+          throw new BadRequestException('Cannot edit a deleted message.');
+        }
+
+        const nowDate = new Date(now);
         await db
-          .update(messages)
+          .update(chatMessages)
           .set({
             content: dto.content,
             isEdited: true,
-            editedAt: now,
+            editedAt: nowDate,
           })
-          .where(eq(messages.id, dto.messageId));
+          .where(eq(chatMessages.id, dto.messageId));
 
         return {
           id: msg.id,
           conversationId: msg.conversationId,
-          senderId: msg.senderId,
+          senderId: msg.senderUserId,
           senderName: user.name,
           senderAvatar: user.avatar,
           content: dto.content,
-          timestamp: msg.timestampDisplay,
-          date: msg.dateDisplay || 'Today',
-          createdAt: msg.createdAt,
+          timestamp: new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          date: 'Today',
+          createdAt: msg.createdAt.getTime(),
           isMe: true,
           isEdited: true,
           editedAt: now,
@@ -455,6 +547,7 @@ export class MessagesService {
           throw err;
         }
         this.logger.error('Failed to edit message in DB:', err);
+        throw new InternalServerErrorException('Database failure while editing message. Failed closed.');
       }
     }
 
@@ -481,7 +574,7 @@ export class MessagesService {
   }
 
   /**
-   * Delete a message within the 15-minute window
+   * Delete a message within the strict 15-minute window (sender only)
    */
   async deleteMessage(user: InternalUser, dto: DeleteMessageDto): Promise<ChatMessage> {
     const now = Date.now();
@@ -491,8 +584,8 @@ export class MessagesService {
         const db = this.dbService.getDb();
         const existing = await db
           .select()
-          .from(messages)
-          .where(and(eq(messages.id, dto.messageId), eq(messages.conversationId, dto.conversationId)))
+          .from(chatMessages)
+          .where(and(eq(chatMessages.id, dto.messageId), eq(chatMessages.conversationId, dto.conversationId)))
           .limit(1);
 
         if (existing.length === 0) {
@@ -500,11 +593,11 @@ export class MessagesService {
         }
 
         const msg = existing[0];
-        if (msg.senderId !== user.id && user.role !== 'business') {
+        if (msg.senderUserId !== user.id) {
           throw new ForbiddenException('You can only delete your own messages.');
         }
 
-        if (now - msg.createdAt > DELETE_WINDOW_MS) {
+        if (now - msg.createdAt.getTime() > DELETE_WINDOW_MS) {
           throw new BadRequestException({
             statusCode: 400,
             errorCode: ChatErrorCode.MESSAGE_DELETE_EXPIRED,
@@ -512,25 +605,27 @@ export class MessagesService {
           });
         }
 
+        const nowDate = new Date(now);
         await db
-          .update(messages)
+          .update(chatMessages)
           .set({
             content: 'This message was deleted',
             deletedForEveryone: true,
+            deletedAt: nowDate,
           })
-          .where(eq(messages.id, dto.messageId));
+          .where(eq(chatMessages.id, dto.messageId));
 
         return {
           id: msg.id,
           conversationId: msg.conversationId,
-          senderId: msg.senderId,
+          senderId: msg.senderUserId,
           senderName: user.name,
           senderAvatar: user.avatar,
           content: 'This message was deleted',
-          timestamp: msg.timestampDisplay,
-          date: msg.dateDisplay || 'Today',
-          createdAt: msg.createdAt,
-          isMe: msg.senderId === user.id,
+          timestamp: new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          date: 'Today',
+          createdAt: msg.createdAt.getTime(),
+          isMe: msg.senderUserId === user.id,
           deletedForEveryone: true,
         };
       } catch (err) {
@@ -538,6 +633,7 @@ export class MessagesService {
           throw err;
         }
         this.logger.error('Failed to delete message in DB:', err);
+        throw new InternalServerErrorException('Database failure while deleting message. Failed closed.');
       }
     }
 
@@ -546,7 +642,7 @@ export class MessagesService {
     if (!msg) {
       throw new NotFoundException('Message not found.');
     }
-    if (msg.senderId !== user.id && user.role !== 'business') {
+    if (msg.senderId !== user.id) {
       throw new ForbiddenException('You can only delete your own messages.');
     }
     if (now - msg.createdAt > DELETE_WINDOW_MS) {
@@ -573,19 +669,63 @@ export class MessagesService {
   }
 
   /**
-   * Mark all unread messages in a conversation as read by the reader
+   * Helper to append an in-memory message directly
    */
-  markMessagesAsRead(conversationId: string, readerUserId: string, readerEmail?: string) {
-    const normReaderEmail = readerEmail?.toLowerCase().trim();
-    for (const msg of this.inMemoryMessages) {
-      if (msg.conversationId === conversationId) {
-        const isFromOther =
-          msg.senderId !== readerUserId &&
-          (!normReaderEmail || msg.senderEmail?.toLowerCase().trim() !== normReaderEmail);
-        if (isFromOther) {
-          msg.status = 'read';
+  addInMemoryMessage(msg: ChatMessage) {
+    this.inMemoryMessages.push(msg);
+  }
+
+  /**
+   * Helper to mark messages read in memory
+   */
+  markMessagesAsRead(conversationId: string, userId: string, userEmail?: string) {
+    for (const m of this.inMemoryMessages) {
+      if (m.conversationId === conversationId && m.senderId !== userId) {
+        m.status = 'read';
+      }
+    }
+  }
+
+  /**
+   * Purge expired attachments (48h retention)
+   */
+  async purgeExpiredAttachments(): Promise<{ purgedCount: number }> {
+    let purgedCount = 0;
+    const now = Date.now();
+
+    if (this.dbService.isDbConnected()) {
+      try {
+        const db = this.dbService.getDb();
+        const expired = await db
+          .select()
+          .from(chatMessageAttachments)
+          .where(and(lt(chatMessageAttachments.expiresAt, new Date(now)), eq(chatMessageAttachments.isExpired, false)));
+
+        for (const item of expired) {
+          await db
+            .update(chatMessageAttachments)
+            .set({ isExpired: true, url: '', expiredAt: new Date(now) })
+            .where(eq(chatMessageAttachments.id, item.id));
+          purgedCount++;
+        }
+      } catch (err) {
+        this.logger.error('Failed to purge expired attachments in DB:', err);
+      }
+    }
+
+    // Also purge in memory
+    for (const m of this.inMemoryMessages) {
+      if (m.attachments) {
+        for (const a of m.attachments) {
+          if (!a.isExpired && a.expiresAt <= now) {
+            a.isExpired = true;
+            a.url = '';
+            purgedCount++;
+          }
         }
       }
     }
+
+    return { purgedCount };
   }
 }

@@ -4,6 +4,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { LogOut, LogIn, ShieldCheck, Mail, Building2, User as UserIcon } from 'lucide-react';
 import { UserAvatar } from '@/components/ui/UserAvatar';
+import { isBusinessUser } from '@/lib/security';
 
 interface UserMenuProps {
   onOpenAuthModal: () => void;
@@ -100,7 +101,7 @@ export const UserMenu: React.FC<UserMenuProps> = ({ onOpenAuthModal }) => {
 
             {/* Role Badge */}
             <div className="mt-3 flex items-center gap-1.5 px-2.5 py-1 bg-blue-50/80 border border-blue-100 rounded-lg text-[11px] font-semibold text-blue-700">
-              {user.email?.toLowerCase() === 'mailtosidharth.me@gmail.com' ? (
+              {isBusinessUser(user.email) ? (
                 <>
                   <Building2 size={13} className="text-blue-600 flex-shrink-0" />
                   <span>Business Workspace Account</span>

@@ -1,13 +1,16 @@
-import { Injectable, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { Injectable, ForbiddenException } from '@nestjs/common';
 import { StorageService, SignedUploadPolicy } from '../../infrastructure/storage/storage.service';
+import { ChatStorageProvider } from '../../infrastructure/storage/chat-storage.provider';
 import { DatabaseService } from '../../infrastructure/database/database.service';
-import { conversationParticipants, messageAttachments } from '../../infrastructure/database/schema';
-import { eq, and } from 'drizzle-orm';
+import { chatConversations, orqspaces } from '../../infrastructure/database/schema';
+import { eq, and, or } from 'drizzle-orm';
+import * as crypto from 'crypto';
 
 @Injectable()
 export class AttachmentsService {
   constructor(
     private readonly storageService: StorageService,
+    private readonly chatStorageProvider: ChatStorageProvider,
     private readonly dbService: DatabaseService
   ) {}
 
@@ -18,16 +21,20 @@ export class AttachmentsService {
     mimeType: string,
     size: number
   ): Promise<SignedUploadPolicy> {
-    // 1. Verify user is participant in conversation
+    // 1. Verify user is participant in conversation if database is connected
     if (this.dbService.isDbConnected()) {
       const db = this.dbService.getDb();
       const membership = await db
         .select()
-        .from(conversationParticipants)
+        .from(chatConversations)
+        .innerJoin(orqspaces, eq(chatConversations.orqspaceId, orqspaces.id))
         .where(
           and(
-            eq(conversationParticipants.conversationId, conversationId),
-            eq(conversationParticipants.userId, userId)
+            eq(chatConversations.id, conversationId),
+            or(
+              eq(chatConversations.clientUserId, userId),
+              eq(orqspaces.ownerId, userId)
+            )
           )
         )
         .limit(1);
@@ -37,12 +44,23 @@ export class AttachmentsService {
       }
     }
 
-    // 2. Generate signed policy
-    return this.storageService.generateSignedUploadUrl(
+    // 2. Delegate to ChatStorageProvider (enforces size <= 5MB, MIME, dangerous extension checks)
+    const policy = await this.chatStorageProvider.createUploadPolicy({
       conversationId,
       fileName,
       mimeType,
-      size
-    );
+      sizeBytes: size,
+    });
+
+    const attachmentId = crypto.randomUUID();
+
+    return {
+      uploadUrl: policy.uploadUrl,
+      downloadUrl: policy.url,
+      objectKey: policy.storageKey,
+      expiresInSeconds: 48 * 3600,
+      attachmentId,
+      expiresAt: policy.expiresAt.getTime(),
+    };
   }
 }

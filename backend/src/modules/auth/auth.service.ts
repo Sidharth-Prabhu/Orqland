@@ -1,12 +1,13 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { DatabaseService } from '../../infrastructure/database/database.service';
-import { users } from '../../infrastructure/database/schema';
+import { orqUsers, orqspaces } from '../../infrastructure/database/schema';
 import { DecodedAuthToken } from './firebase-admin.service';
-import { eq, or } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import * as crypto from 'crypto';
+import { INITIAL_BUSINESSES, BusinessDirectoryItem } from '@orqland/contracts';
 
 export interface InternalUser {
-  id: string; // internal ORQLAND UUID
+  id: string; // internal ORQLAND UUID matching orq_users.id
   firebaseUid: string;
   email: string;
   name: string;
@@ -20,32 +21,115 @@ export interface InternalUser {
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
-  private inMemoryUsers = new Map<string, InternalUser>(); // Fallback in-memory map
+  private inMemoryUsers = new Map<string, InternalUser>();
+  private businessDirectory: BusinessDirectoryItem[] = [...INITIAL_BUSINESSES];
 
   constructor(private readonly dbService: DatabaseService) {
     this.seedDefaultUsers();
   }
 
   private seedDefaultUsers() {
-    const defaultBusiness: InternalUser = {
-      id: 'a0000000-0000-0000-0000-000000000001',
-      firebaseUid: 'biz-sidharth',
-      email: 'mailtosidharth.me@gmail.com',
-      name: "Sidharth Prabhu's Workspace",
-      handle: 'sidharth_workspace',
-      avatar: 'https://lh3.googleusercontent.com/a/ACg8ocK77osqTQ76zfsDwgj5r5kQZiKsBHRgjI-1NqrM62sChRVilDG5dA=s96-c',
-      role: 'business',
-      wsid: 'WS#ENOJEXBC#',
-      businessStatus: 'Open',
-    };
-    this.inMemoryUsers.set(defaultBusiness.email, defaultBusiness);
-    this.inMemoryUsers.set(defaultBusiness.id, defaultBusiness);
-    this.inMemoryUsers.set(defaultBusiness.firebaseUid, defaultBusiness);
+    // Seed neutral test users
+    const defaultUsers: InternalUser[] = [
+      {
+        id: '11111111-1111-1111-1111-111111111111',
+        firebaseUid: 'dev-client-1',
+        email: 'client1@orqland.test',
+        name: 'Alice Client',
+        handle: '@client1',
+        avatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=128&h=128&fit=crop',
+        role: 'client',
+      },
+      {
+        id: '22222222-2222-2222-2222-222222222222',
+        firebaseUid: 'dev-client-2',
+        email: 'client2@orqland.test',
+        name: 'Bob Client',
+        handle: '@client2',
+        avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=128&h=128&fit=crop',
+        role: 'client',
+      },
+      {
+        id: '33333333-3333-3333-3333-333333333333',
+        firebaseUid: 'dev-owner-alpha',
+        email: 'owner.alpha@orqland.test',
+        name: 'Alpha Owner',
+        handle: '@alphaowner',
+        avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=128&h=128&fit=crop',
+        role: 'business',
+        wsid: 'WS#ALPHA#01',
+        businessStatus: 'Open',
+      },
+      {
+        id: '44444444-4444-4444-4444-444444444444',
+        firebaseUid: 'dev-owner-beta',
+        email: 'owner.beta@orqland.test',
+        name: 'Beta Owner',
+        handle: '@betaowner',
+        avatar: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=128&h=128&fit=crop',
+        role: 'business',
+        wsid: 'WS#BETA#02',
+        businessStatus: 'Open',
+      },
+      {
+        id: 'a0000000-0000-0000-0000-000000000001',
+        firebaseUid: 'biz-mailtosidharth.me@gmail.com',
+        email: 'mailtosidharth.me@gmail.com',
+        name: 'Sidharth Prabhu',
+        handle: '@sidharth',
+        avatar: 'https://lh3.googleusercontent.com/a/ACg8ocK77osqTQ76zfsDwgj5r5kQZiKsBHRgjI-1NqrM62sChRVilDG5dA=s96-c',
+        role: 'business',
+        wsid: 'WS#ALPHA#01',
+        businessStatus: 'Open',
+      },
+    ];
+
+    for (const u of defaultUsers) {
+      this.inMemoryUsers.set(u.email.toLowerCase(), u);
+      this.inMemoryUsers.set(u.id, u);
+      this.inMemoryUsers.set(u.firebaseUid, u);
+    }
+
+    // Seed all directory businesses as in-memory users
+    for (const biz of this.businessDirectory) {
+      const bizUser: InternalUser = {
+        id: biz.id,
+        firebaseUid: `biz-${biz.id}`,
+        email: biz.email.toLowerCase(),
+        name: biz.name,
+        handle: `@${biz.email.split('@')[0]}`,
+        avatar: biz.avatar,
+        role: 'business',
+        wsid: biz.wsid,
+        businessStatus: biz.status,
+      };
+      this.inMemoryUsers.set(bizUser.email.toLowerCase(), bizUser);
+      this.inMemoryUsers.set(bizUser.id, bizUser);
+      this.inMemoryUsers.set(bizUser.firebaseUid, bizUser);
+    }
+  }
+
+  getBusinesses(): BusinessDirectoryItem[] {
+    return this.businessDirectory;
+  }
+
+  isBusinessEmail(email: string): boolean {
+    const clean = (email || '').trim().toLowerCase();
+    const envBusinesses = (process.env.BUSINESS_EMAILS || process.env.BUSINESS_EMAIL || '')
+      .toLowerCase()
+      .split(',')
+      .map((e) => e.trim())
+      .filter(Boolean);
+
+    if (envBusinesses.includes(clean)) return true;
+    if (clean === 'mailtosidharth.me@gmail.com') return true;
+
+    return this.businessDirectory.some((b) => b.email.toLowerCase() === clean);
   }
 
   /**
    * Resolves Firebase token to internal ORQLAND user UUID.
-   * Auto-provisions user on first login if not found.
+   * Auto-provisions user in orq_users table on first login.
    */
   async resolveOrCreateUser(decoded: DecodedAuthToken): Promise<InternalUser> {
     const firebaseUid = decoded.uid;
@@ -53,66 +137,43 @@ export class AuthService {
     const name = decoded.name?.trim() || email.split('@')[0] || 'User';
     const avatar = decoded.picture || '';
 
-    // Business identity rule: only mailtosidharth.me@gmail.com is business
-    const role: 'client' | 'business' =
-      email === 'mailtosidharth.me@gmail.com' ? 'business' : 'client';
+    // Dynamic Business identity rule
+    const role: 'client' | 'business' = this.isBusinessEmail(email) ? 'business' : 'client';
 
     if (this.dbService.isDbConnected()) {
       try {
         const db = this.dbService.getDb();
 
-        // 1. Check by firebaseUid or email
+        // 1. Check existing user in orq_users table
         const existingList = await db
           .select()
-          .from(users)
-          .where(or(eq(users.firebaseUid, firebaseUid), eq(users.email, email)))
+          .from(orqUsers)
+          .where(eq(orqUsers.email, email))
           .limit(1);
 
         if (existingList.length > 0) {
           const u = existingList[0];
-          // If firebaseUid wasn't linked yet, link it
-          if (u.firebaseUid !== firebaseUid || u.avatarUrl !== avatar) {
-            await db
-              .update(users)
-              .set({
-                firebaseUid,
-                avatarUrl: avatar || u.avatarUrl,
-                name: name || u.name,
-                updatedAt: new Date(),
-              })
-              .where(eq(users.id, u.id));
-          }
-
           return {
             id: u.id,
             firebaseUid,
-            email: u.email,
-            name: u.name,
-            handle: u.handle || `@${u.email.split('@')[0]}`,
-            avatar: u.avatarUrl || '',
-            role: (u.role as 'client' | 'business') || role,
-            wsid: u.wsid || undefined,
-            businessStatus: (u.businessStatus as 'Open' | 'Closed') || 'Open',
+            email: u.email || email,
+            name: u.displayName || name,
+            handle: `@${(u.email || email).split('@')[0]}`,
+            avatar: u.avatar || avatar,
+            role,
+            wsid: role === 'business' ? 'WS#ALPHA#01' : undefined,
+            businessStatus: 'Open',
           };
         }
 
-        // 2. First-time registration -> Insert new user
+        // 2. First-time registration -> Insert new user into orq_users
         const newUserId = crypto.randomUUID();
-        const handle = `@${email.split('@')[0]}`;
-        const wsid = role === 'business' ? 'WS#ENOJEXBC#' : undefined;
-
-        await db.insert(users).values({
+        await db.insert(orqUsers).values({
           id: newUserId,
-          firebaseUid,
+          displayName: name,
           email,
-          name,
-          handle,
-          avatarUrl: avatar,
-          role,
-          wsid,
-          businessStatus: 'Open',
-          isOnline: true,
-          lastSeenAt: Date.now(),
+          avatar,
+          isActive: true,
         });
 
         return {
@@ -120,10 +181,10 @@ export class AuthService {
           firebaseUid,
           email,
           name,
-          handle,
+          handle: `@${email.split('@')[0]}`,
           avatar,
           role,
-          wsid,
+          wsid: role === 'business' ? 'WS#ALPHA#01' : undefined,
           businessStatus: 'Open',
         };
       } catch (err) {
@@ -133,7 +194,10 @@ export class AuthService {
 
     // In-Memory Fallback for development without PostgreSQL
     let user =
-      this.inMemoryUsers.get(firebaseUid) || this.inMemoryUsers.get(email);
+      this.inMemoryUsers.get(firebaseUid) ||
+      this.inMemoryUsers.get(email.toLowerCase()) ||
+      this.inMemoryUsers.get(email);
+
     if (!user) {
       const newId = crypto.randomUUID();
       user = {
@@ -144,13 +208,17 @@ export class AuthService {
         handle: `@${email.split('@')[0]}`,
         avatar,
         role,
-        wsid: role === 'business' ? 'WS#ENOJEXBC#' : undefined,
+        wsid: role === 'business' ? 'WS#ALPHA#01' : undefined,
         businessStatus: 'Open',
       };
       this.inMemoryUsers.set(newId, user);
       this.inMemoryUsers.set(firebaseUid, user);
+      this.inMemoryUsers.set(email.toLowerCase(), user);
       this.inMemoryUsers.set(email, user);
+    } else {
+      this.inMemoryUsers.set(firebaseUid, user);
     }
+
     return user;
   }
 
@@ -158,19 +226,20 @@ export class AuthService {
     if (this.dbService.isDbConnected()) {
       try {
         const db = this.dbService.getDb();
-        const rows = await db.select().from(users).where(eq(users.id, id)).limit(1);
+        const rows = await db.select().from(orqUsers).where(eq(orqUsers.id, id)).limit(1);
         if (rows.length > 0) {
           const u = rows[0];
+          const isBiz = this.isBusinessEmail(u.email || '');
           return {
             id: u.id,
-            firebaseUid: u.firebaseUid,
-            email: u.email,
-            name: u.name,
-            handle: u.handle || `@${u.email.split('@')[0]}`,
-            avatar: u.avatarUrl || '',
-            role: u.role as 'client' | 'business',
-            wsid: u.wsid || undefined,
-            businessStatus: (u.businessStatus as 'Open' | 'Closed') || 'Open',
+            firebaseUid: `user-${u.id}`,
+            email: u.email || '',
+            name: u.displayName || '',
+            handle: `@${(u.email || '').split('@')[0]}`,
+            avatar: u.avatar || '',
+            role: isBiz ? 'business' : 'client',
+            wsid: isBiz ? 'WS#ALPHA#01' : undefined,
+            businessStatus: 'Open',
           };
         }
       } catch (err) {
@@ -185,19 +254,20 @@ export class AuthService {
     if (this.dbService.isDbConnected()) {
       try {
         const db = this.dbService.getDb();
-        const rows = await db.select().from(users).where(eq(users.email, clean)).limit(1);
+        const rows = await db.select().from(orqUsers).where(eq(orqUsers.email, clean)).limit(1);
         if (rows.length > 0) {
           const u = rows[0];
+          const isBiz = this.isBusinessEmail(u.email || '');
           return {
             id: u.id,
-            firebaseUid: u.firebaseUid,
-            email: u.email,
-            name: u.name,
-            handle: u.handle || `@${u.email.split('@')[0]}`,
-            avatar: u.avatarUrl || '',
-            role: u.role as 'client' | 'business',
-            wsid: u.wsid || undefined,
-            businessStatus: (u.businessStatus as 'Open' | 'Closed') || 'Open',
+            firebaseUid: `user-${u.id}`,
+            email: u.email || clean,
+            name: u.displayName || '',
+            handle: `@${(u.email || clean).split('@')[0]}`,
+            avatar: u.avatar || '',
+            role: isBiz ? 'business' : 'client',
+            wsid: isBiz ? 'WS#ALPHA#01' : undefined,
+            businessStatus: 'Open',
           };
         }
       } catch (err) {
@@ -217,13 +287,12 @@ export class AuthService {
         try {
           const db = this.dbService.getDb();
           await db
-            .update(users)
+            .update(orqUsers)
             .set({
-              name: existing.name,
-              avatarUrl: existing.avatar,
-              updatedAt: new Date(),
+              displayName: existing.name,
+              avatar: existing.avatar,
             })
-            .where(eq(users.id, existing.id));
+            .where(eq(orqUsers.id, existing.id));
         } catch (err) {
           this.logger.error('Failed to sync user profile in DB:', err);
         }

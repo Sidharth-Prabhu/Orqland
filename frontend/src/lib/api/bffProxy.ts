@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 const NEST_API_BASE =
   process.env.NEST_API_URL ||
   process.env.INTERNAL_API_URL ||
-  'http://localhost:3001/api/v1';
+  'http://localhost:3002/api/v1';
 
 export async function proxyToNest(
   request: NextRequest,
@@ -60,12 +60,16 @@ export async function proxyToNest(
     if (!headers['authorization'] && !headers['x-user-email'] && bodyText) {
       try {
         const parsed = JSON.parse(bodyText);
-        const devEmail = parsed.clientEmail || parsed.userEmail || parsed.senderEmail || parsed.email;
+        const devEmail =
+          parsed.userEmail ||
+          parsed.clientEmail ||
+          parsed.senderEmail ||
+          parsed.email;
         if (devEmail) {
           headers['x-user-email'] = devEmail;
         }
       } catch {
-        // ignore parse error
+        // ignore invalid JSON
       }
     }
 

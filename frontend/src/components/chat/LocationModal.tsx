@@ -3,6 +3,7 @@
 import React, { useState } from 'react';
 import { MapPin, X, Navigation, Loader2, AlertCircle } from 'lucide-react';
 import { ChatAttachment } from '@/types/chat';
+import { ATTACHMENT_RETENTION_MS } from '@/lib/constants';
 
 interface LocationModalProps {
   isOpen: boolean;
@@ -23,7 +24,7 @@ function createLocationAttachment(
     name: label?.trim() || 'Shared Location',
     url: mapUrl,
     uploadedAt: now,
-    expiresAt: now + 48 * 60 * 60 * 1000,
+    expiresAt: now + ATTACHMENT_RETENTION_MS,
     locationData: {
       latitude: coords.lat,
       longitude: coords.lng,

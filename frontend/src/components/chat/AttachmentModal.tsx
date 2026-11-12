@@ -7,8 +7,9 @@ import { validateAttachmentFile } from '@/lib/security';
 import { generatePdfThumbnail } from '@/lib/pdfThumbnail';
 import { compressImageIfNeeded } from '@/lib/imageCompressor';
 import { uploadFileToFirebaseStorage } from '@/lib/firebaseStorage';
-import { MAX_ATTACHMENT_SIZE_BYTES } from '@/lib/constants';
+import { MAX_ATTACHMENT_SIZE_BYTES, ATTACHMENT_RETENTION_MS } from '@/lib/constants';
 import { ChatAttachment } from '@/types/chat';
+import { auth } from '@/lib/firebase';
 
 interface AttachmentModalProps {
   isOpen: boolean;
@@ -28,7 +29,8 @@ interface SelectedItem {
 
 function buildFileAttachment(
   file: File,
-  base64Data: string,
+  url: string,
+  objectKey: string,
   fileType: 'image' | 'pdf',
   thumbnailUrl?: string
 ): ChatAttachment {
@@ -37,12 +39,13 @@ function buildFileAttachment(
     id: `att-${now}-${Math.random().toString(36).slice(2, 6)}`,
     type: fileType,
     name: file.name,
-    url: base64Data,
+    url,
+    objectKey,
     thumbnailUrl: thumbnailUrl || undefined,
     size: file.size,
     mimeType: file.type,
     uploadedAt: now,
-    expiresAt: now + 48 * 60 * 60 * 1000,
+    expiresAt: now + ATTACHMENT_RETENTION_MS,
   };
 }
 
@@ -77,10 +80,10 @@ export const AttachmentModal: React.FC<AttachmentModalProps> = ({
         incomingFile.type.toLowerCase().startsWith('image/') ||
         ['jpg', 'jpeg', 'png', 'webp'].includes(incomingFile.name.split('.').pop()?.toLowerCase() || '');
 
-      // If an image exceeds 5MB, compress it without quality getting bad
-      if (isImg && incomingFile.size > MAX_ATTACHMENT_SIZE_BYTES) {
+      // Optimize images to retina resolution (2560px) & lossless WebP/JPEG to ensure instant fast uploads
+      if (isImg) {
         try {
-          const compResult = await compressImageIfNeeded(incomingFile, MAX_ATTACHMENT_SIZE_BYTES);
+          const compResult = await compressImageIfNeeded(incomingFile);
           file = compResult.file;
         } catch (err) {
           console.warn('Image compression fallback:', err);
@@ -139,9 +142,13 @@ export const AttachmentModal: React.FC<AttachmentModalProps> = ({
     setError(null);
 
     try {
-      // Upload directly to Firebase Cloud Storage
+      // Upload directly to storage gateway
       const uploadPromises = items.map(async (item) => {
-        const uploadRes = await uploadFileToFirebaseStorage(item.file, 'modal_uploads');
+        const uploadRes = await uploadFileToFirebaseStorage(
+          item.file,
+          'modal_uploads',
+          auth.currentUser?.email || undefined
+        );
         let thumb = item.previewUrl;
         if (item.type === 'pdf' && (!thumb || thumb.startsWith('blob:'))) {
           try {
@@ -150,7 +157,7 @@ export const AttachmentModal: React.FC<AttachmentModalProps> = ({
             thumb = '';
           }
         }
-        return buildFileAttachment(item.file, uploadRes.url, item.type, thumb);
+        return buildFileAttachment(item.file, uploadRes.url, uploadRes.storagePath, item.type, thumb);
       });
 
       const attachments = await Promise.all(uploadPromises);

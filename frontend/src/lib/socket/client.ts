@@ -6,8 +6,8 @@ let currentToken: string | null = null;
 const SOCKET_URL =
   process.env.NEXT_PUBLIC_SOCKET_URL ||
   (typeof window !== 'undefined'
-    ? `${window.location.protocol}//${window.location.hostname}:3001`
-    : 'http://localhost:3001');
+    ? `${window.location.protocol}//${window.location.hostname}:3002`
+    : 'http://localhost:3002');
 
 /**
  * Initialize or get the shared authenticated Socket.IO instance

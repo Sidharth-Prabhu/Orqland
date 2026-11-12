@@ -97,6 +97,44 @@ export function isPageInBackground(): boolean {
   return document.hidden || !document.hasFocus();
 }
 
+let titleBlinkInterval: ReturnType<typeof setInterval> | null = null;
+let originalTitle = '';
+
+/**
+ * Flash page title to alert user in background tabs
+ */
+export function startTitleAlert(previewText?: string) {
+  if (typeof document === 'undefined') return;
+  if (!originalTitle) {
+    originalTitle = document.title || 'OpenPurpl';
+  }
+  if (titleBlinkInterval) clearInterval(titleBlinkInterval);
+
+  let toggle = false;
+  const cleanPreview = (previewText || 'New Message').slice(0, 24);
+  titleBlinkInterval = setInterval(() => {
+    document.title = toggle ? '💬 (1) New message!' : `📩 ${cleanPreview}`;
+    toggle = !toggle;
+  }, 1000);
+
+  const clearAlert = () => {
+    if (titleBlinkInterval) {
+      clearInterval(titleBlinkInterval);
+      titleBlinkInterval = null;
+    }
+    document.title = originalTitle || 'OpenPurpl';
+    window.removeEventListener('focus', clearAlert);
+    document.removeEventListener('visibilitychange', clearAlert);
+  };
+
+  window.addEventListener('focus', clearAlert);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      clearAlert();
+    }
+  });
+}
+
 export interface SendBrowserNotificationOptions {
   title: string;
   body: string;
@@ -117,7 +155,15 @@ export async function sendBrowserNotification({
   conversationId,
   onClick,
 }: SendBrowserNotificationOptions): Promise<void> {
-  if (typeof window === 'undefined' || !('Notification' in window)) {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  // Play audio alert and flash tab title regardless of notification permission
+  playNotificationChime();
+  startTitleAlert(body);
+
+  if (!('Notification' in window)) {
     return;
   }
 
@@ -125,14 +171,11 @@ export async function sendBrowserNotification({
     return;
   }
 
-  // Play audio alert
-  playNotificationChime();
-
   const notifOptions: NotificationOptions = {
     body,
     icon,
     badge: icon,
-    tag: tag || 'openpurpl-chat',
+    tag: tag || `chat-${Date.now()}`,
     silent: false,
     data: {
       conversationId,
@@ -140,34 +183,51 @@ export async function sendBrowserNotification({
     },
   };
 
-  // 1. Try Service Worker showNotification (preferred on macOS/Chrome)
+  // 1. Try Service Worker showNotification via getRegistration with a strict 200ms timeout
+  let swNotified = false;
   try {
     if ('serviceWorker' in navigator) {
-      const reg = await navigator.serviceWorker.ready;
-      if (reg && reg.showNotification) {
+      if (navigator.serviceWorker.controller) {
+        navigator.serviceWorker.controller.postMessage({
+          type: 'SHOW_NOTIFICATION',
+          title,
+          options: notifOptions,
+        });
+        swNotified = true;
+      }
+
+      const reg = await Promise.race([
+        navigator.serviceWorker.getRegistration(),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), 200)),
+      ]);
+
+      if (reg && reg.active && typeof reg.showNotification === 'function') {
         await reg.showNotification(title, notifOptions);
-        return;
+        swNotified = true;
       }
     }
   } catch (err) {
     console.debug('SW notification fallback to standard Notification:', err);
   }
 
-  // 2. Standard fallback Notification constructor
-  try {
-    const notification = new Notification(title, notifOptions);
+  // 2. Standard instant Notification constructor fallback
+  if (!swNotified) {
+    try {
+      const notification = new Notification(title, notifOptions);
 
-    notification.onclick = (e) => {
-      e.preventDefault();
-      try {
-        window.focus();
-      } catch {}
-      if (onClick) {
-        onClick();
-      }
-      notification.close();
-    };
-  } catch (err) {
-    console.error('Failed to dispatch browser notification:', err);
+      notification.onclick = (e) => {
+        e.preventDefault();
+        try {
+          window.focus();
+        } catch {}
+        if (onClick) {
+          onClick();
+        }
+        notification.close();
+      };
+    } catch (err) {
+      console.error('Failed to dispatch browser notification:', err);
+    }
   }
 }
+

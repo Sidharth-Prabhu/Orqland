@@ -29,11 +29,17 @@ import {
   UploadCloud,
 } from 'lucide-react';
 import { Conversation, ChatMessage, ChatAttachment } from '@/types/chat';
-import { isBusinessUser, detectSensitiveContent, validateAttachmentFile } from '@/lib/security';
+import { chatService } from '@/lib/chatService';
+import {
+  isBusinessUser,
+  detectSensitiveContent,
+  validateAttachmentFile,
+  isAttachmentExpired,
+} from '@/lib/security';
 import { generatePdfThumbnail } from '@/lib/pdfThumbnail';
 import { compressImageIfNeeded } from '@/lib/imageCompressor';
 import { uploadFileToFirebaseStorage } from '@/lib/firebaseStorage';
-import { MAX_ATTACHMENT_SIZE_BYTES } from '@/lib/constants';
+import { MAX_ATTACHMENT_SIZE_BYTES, ATTACHMENT_RETENTION_MS } from '@/lib/constants';
 import { DeleteChatModal } from '@/components/chat/DeleteChatModal';
 import { EndChatModal } from '@/components/chat/EndChatModal';
 import { AttachmentModal } from '@/components/chat/AttachmentModal';
@@ -41,6 +47,7 @@ import { LocationModal } from '@/components/chat/LocationModal';
 import { ImageViewerModal } from '@/components/chat/ImageViewerModal';
 import { PdfViewerModal } from '@/components/chat/PdfViewerModal';
 import { PdfThumbnail } from '@/components/chat/PdfThumbnail';
+import { ChatImageAttachment } from '@/components/chat/ChatImageAttachment';
 import { UserAvatar } from '@/components/ui/UserAvatar';
 
 interface ChatConversationProps {
@@ -49,7 +56,8 @@ interface ChatConversationProps {
   onSendMessage: (
     text: string,
     attachment?: ChatAttachment,
-    attachments?: ChatAttachment[]
+    attachments?: ChatAttachment[],
+    skipApiSync?: boolean
   ) => void;
   onDeleteChat?: (conversationId: string) => Promise<void>;
   onEndChat?: (conversationId: string) => Promise<void>;
@@ -177,10 +185,10 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
         incomingFile.type.toLowerCase().startsWith('image/') ||
         ['jpg', 'jpeg', 'png', 'webp'].includes(incomingFile.name.split('.').pop()?.toLowerCase() || '');
 
-      // If an image exceeds 5MB, compress it without quality getting bad
-      if (isImg && incomingFile.size > MAX_ATTACHMENT_SIZE_BYTES) {
+      // Optimize images to retina resolution (2560px) & lossless WebP/JPEG to ensure instant fast uploads
+      if (isImg) {
         try {
-          const compResult = await compressImageIfNeeded(incomingFile, MAX_ATTACHMENT_SIZE_BYTES);
+          const compResult = await compressImageIfNeeded(incomingFile);
           file = compResult.file;
         } catch (err) {
           console.warn('Image compression fallback:', err);
@@ -480,46 +488,83 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
       return;
     }
 
-    // If there are staged files, upload directly to Firebase Cloud Storage and send
+    // If there are staged files, send optimistically immediately (0ms delay) and upload in the background
     if (stagedFiles.length > 0) {
-      setIsSendingAttachments(true);
-      try {
-        const uploadPromises = stagedFiles.map(async (item) => {
-          // Upload directly to Firebase Cloud Storage
-          const uploadRes = await uploadFileToFirebaseStorage(item.file, conversation.id);
+      const filesToProcess = [...stagedFiles];
+      const textToSend = inputText.trim();
+      const now = Date.now();
 
-          let thumb = item.previewUrl;
-          if (item.type === 'pdf' && (!thumb || thumb.startsWith('blob:'))) {
-            try {
-              thumb = await generatePdfThumbnail(item.file);
-            } catch {
-              thumb = '';
+      // Clear input bar and staged previews immediately for snappy Telegram/WhatsApp feel
+      setInputText('');
+      clearStagedFiles();
+
+      // Create optimistic attachments with local preview blob URLs
+      const optimisticAttachments = filesToProcess.map((item, idx) => ({
+        id: `att-temp-${now}-${idx}-${Math.random().toString(36).slice(2, 6)}`,
+        type: item.type,
+        name: item.file.name,
+        url: item.previewUrl,
+        thumbnailUrl: item.previewUrl,
+        size: item.file.size,
+        mimeType: item.file.type || (item.type === 'pdf' ? 'application/pdf' : 'image/jpeg'),
+        uploadedAt: now,
+        expiresAt: now + ATTACHMENT_RETENTION_MS,
+      }));
+
+      // Render optimistic message in chat bubble with 0ms perceived latency
+      onSendMessage(textToSend, optimisticAttachments[0], optimisticAttachments, true);
+
+      // Perform cloud upload in parallel in the background without locking the input bar
+      (async () => {
+        try {
+          const uploadPromises = filesToProcess.map(async (item, idx) => {
+            const uploadRes = await uploadFileToFirebaseStorage(
+              item.file,
+              conversation.id,
+              currentUserEmail
+            );
+
+            let thumb = item.previewUrl;
+            if (item.type === 'pdf' && (!thumb || thumb.startsWith('blob:'))) {
+              try {
+                thumb = await generatePdfThumbnail(item.file);
+              } catch {
+                thumb = '';
+              }
             }
-          }
-          const now = Date.now();
-          return {
-            id: `att-${now}-${Math.random().toString(36).slice(2, 6)}`,
-            type: item.type,
-            name: item.file.name,
-            url: uploadRes.url,
-            thumbnailUrl: thumb || undefined,
-            size: uploadRes.size,
-            mimeType: uploadRes.mimeType,
-            uploadedAt: now,
-            expiresAt: now + 48 * 60 * 60 * 1000,
-          };
-        });
 
-        const attachments = await Promise.all(uploadPromises);
-        onSendMessage(inputText.trim(), attachments[0], attachments);
-        setInputText('');
-        clearStagedFiles();
-      } catch (err) {
-        console.error('Failed to send attachments:', err);
-        setAttachmentError('Failed to upload attachments to Cloud Storage. Please try again.');
-      } finally {
-        setIsSendingAttachments(false);
-      }
+            return {
+              id: optimisticAttachments[idx].id,
+              type: item.type,
+              name: item.file.name,
+              url: uploadRes.url,
+              objectKey: uploadRes.storagePath,
+              thumbnailUrl: thumb || undefined,
+              size: uploadRes.size,
+              mimeType: uploadRes.mimeType,
+              uploadedAt: now,
+              expiresAt: now + ATTACHMENT_RETENTION_MS,
+            };
+          });
+
+          const finalAttachments = await Promise.all(uploadPromises);
+
+          // Update backend & cross-tab sync with verified Cloud Storage URLs
+          await chatService.sendMessage({
+            conversationId: conversation.id,
+            senderEmail: currentUserEmail,
+            senderName: isBusiness ? (conversation.businessName || 'Business') : (conversation.clientName || 'Client'),
+            senderAvatar: isBusiness ? (conversation.businessAvatar || '') : (conversation.clientAvatar || ''),
+            content: textToSend,
+            attachment: finalAttachments[0],
+            attachments: finalAttachments,
+          });
+        } catch (err) {
+          console.error('Failed to complete background attachment upload:', err);
+          setAttachmentError('Some attachments failed to upload to Cloud Storage. Please check connection.');
+        }
+      })();
+
       return;
     }
 
@@ -694,37 +739,30 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
               name={conversation.participant.name}
               size={36}
             />
-            {conversation.participant.isOnline && !isChatEnded && (
-              <span
-                className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-emerald-500 ring-2 ring-white"
-                title="Online now"
-              />
-            )}
           </div>
 
           <div className="min-w-0">
-            <div className="flex items-center gap-1.5 sm:gap-2">
+            <div className="flex items-center">
               <span className="text-[13px] sm:text-[14px] font-bold text-gray-900 leading-tight truncate">
                 {conversation.participant.name}
               </span>
+            </div>
+            <div className="flex items-center mt-0.5">
               {isChatEnded ? (
-                <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-red-100 text-red-700 flex-shrink-0">
+                <span className="text-[9px] font-bold px-1.5 py-0.2 rounded-full bg-red-100 text-red-700 flex-shrink-0 leading-tight">
                   Ended
                 </span>
               ) : conversation.participant.isOnline ? (
-                <span className="inline-flex items-center gap-1 text-[9px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200/60 flex-shrink-0">
+                <span className="inline-flex items-center gap-1 text-[9px] font-bold px-1.5 py-0.2 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200/60 flex-shrink-0 leading-tight">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
                   <span>Active</span>
                 </span>
               ) : (
-                <span className="inline-flex items-center gap-1 text-[9px] font-semibold px-2 py-0.5 rounded-full bg-gray-100 text-gray-500 border border-gray-200/60 flex-shrink-0">
+                <span className="inline-flex items-center gap-1 text-[9px] font-semibold px-1.5 py-0.2 rounded-full bg-gray-100 text-gray-500 border border-gray-200/60 flex-shrink-0 leading-tight">
                   <span className="w-1.5 h-1.5 rounded-full bg-gray-400" />
                   <span>Offline</span>
                 </span>
               )}
-            </div>
-            <div className="text-[10px] sm:text-[11px] font-medium text-gray-400 mt-0.5 truncate">
-              {conversation.workspaceInfo?.name || 'Technical Architecture'}
             </div>
           </div>
         </div>
@@ -756,37 +794,7 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
             )}
           </div>
 
-          {/* Details Sidebar Toggle Button */}
-          {onToggleDetails && (
-            <button
-              type="button"
-              onClick={onToggleDetails}
-              className={`p-1.5 rounded-xl transition-all cursor-pointer ${
-                isDetailsOpen
-                  ? 'bg-blue-50 text-blue-600 ring-1 ring-blue-200'
-                  : 'text-gray-500 hover:text-gray-900 hover:bg-gray-100'
-              }`}
-              title={isDetailsOpen ? 'Hide conversation details' : 'Show conversation details'}
-              aria-label="Toggle Details"
-            >
-              <PanelRight size={17} />
-            </button>
-          )}
-
-          {/* End Chat Icon Button in Top Bar (Available when chat is active and onEndChat is provided) */}
-          {onEndChat && !isChatEnded && !isBusiness && (
-            <button
-              type="button"
-              onClick={() => setIsEndModalOpen(true)}
-              className="p-1.5 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-xl transition-colors cursor-pointer group"
-              title="End chat session"
-              aria-label="End Chat"
-            >
-              <Ban size={17} className="group-hover:scale-105 transition-transform" />
-            </button>
-          )}
-
-          {/* Options Dropdown: Chat controls (Close Chat, End Chat, Clear Chat) */}
+          {/* Options Dropdown: Chat controls (Close Chat, End Chat, Clear Chat) - Moved to first */}
           <div className="relative" ref={optionsDropdownRef}>
             <button
               onClick={() => setShowOptionsDropdown(!showOptionsDropdown)}
@@ -797,7 +805,7 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
             </button>
 
             {showOptionsDropdown && (
-              <div className="absolute right-0 mt-2 w-52 bg-white rounded-2xl shadow-xl border border-gray-100 p-1.5 z-40 animate-in fade-in zoom-in-95 duration-100 space-y-0.5">
+              <div className="absolute right-0 sm:right-auto sm:left-0 mt-2 w-52 bg-white rounded-2xl shadow-xl border border-gray-100 p-1.5 z-40 animate-in fade-in zoom-in-95 duration-100 space-y-0.5">
                 {/* Close Chat (Deselects conversation and returns to blank slate) */}
                 {onBackToList && (
                   <button
@@ -860,6 +868,36 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
               </div>
             )}
           </div>
+
+          {/* End Chat Icon Button in Top Bar (Red color) */}
+          {onEndChat && !isChatEnded && !isBusiness && (
+            <button
+              type="button"
+              onClick={() => setIsEndModalOpen(true)}
+              className="p-1.5 text-red-600 hover:text-red-700 hover:bg-red-50 rounded-xl transition-colors cursor-pointer group"
+              title="End chat session"
+              aria-label="End Chat"
+            >
+              <Ban size={17} className="text-red-600 group-hover:scale-105 transition-transform" />
+            </button>
+          )}
+
+          {/* Details Sidebar Toggle Button - Moved to last */}
+          {onToggleDetails && (
+            <button
+              type="button"
+              onClick={onToggleDetails}
+              className={`p-1.5 rounded-xl transition-all cursor-pointer ${
+                isDetailsOpen
+                  ? 'bg-blue-50 text-blue-600 ring-1 ring-blue-200'
+                  : 'text-gray-500 hover:text-gray-900 hover:bg-gray-100'
+              }`}
+              title={isDetailsOpen ? 'Hide conversation details' : 'Show conversation details'}
+              aria-label="Toggle Details"
+            >
+              <PanelRight size={17} />
+            </button>
+          )}
         </div>
       </div>
 
@@ -1111,8 +1149,22 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
                                 return (
                                   <div className={`w-full flex flex-col ${isMe ? 'items-end' : 'items-start'} ${displayContent ? 'mt-1.5 pt-1.5 border-t border-gray-200/80' : ''}`}>
                                     <div className={`${gridClass} ${isMe ? 'ml-auto' : ''}`}>
-                                      {msg.attachments.map((att, idx) => (
-                                        att.type === 'pdf' ? (
+                                      {msg.attachments.map((att, idx) => {
+                                        const isExpired = att.isExpired || (att.uploadedAt && isAttachmentExpired(att.uploadedAt, att.expiresAt));
+                                        if (isExpired) {
+                                          return (
+                                            <div
+                                              key={att.id || idx}
+                                              className={`w-full ${itemHeightClass} rounded-lg bg-amber-50/90 border border-amber-200/80 p-2 flex flex-col items-center justify-center text-center text-amber-800 shadow-2xs select-none`}
+                                            >
+                                              <AlertTriangle size={16} className="text-amber-600 mb-1" />
+                                              <span className="text-[10px] font-semibold leading-tight">Expired</span>
+                                              <span className="text-[9px] text-amber-600/80 mt-0.5">Media deleted</span>
+                                            </div>
+                                          );
+                                        }
+
+                                        return att.type === 'pdf' ? (
                                           <div
                                             key={att.id || idx}
                                             onClick={() =>
@@ -1164,13 +1216,12 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
                                             className={`relative w-full ${itemHeightClass} rounded-lg overflow-hidden bg-gray-100 border border-black/10 shadow-[0_1px_2px_rgba(0,0,0,0.06)] cursor-pointer group/item hover:border-black/25 transition-all`}
                                             title="Click to view image"
                                           >
-                                            <Image
+                                            <ChatImageAttachment
                                               src={att.url || att.thumbnailUrl || ''}
                                               alt={att.name || 'Image'}
                                               fill
                                               sizes="(max-width: 640px) 100px, 120px"
-                                              className="object-cover transition-transform duration-200 group-hover/item:scale-105"
-                                              unoptimized
+                                              priority={idx < 4}
                                             />
                                             {/* WhatsApp-style subtle inner shadow/border overlay */}
                                             <div className="absolute inset-0 ring-1 ring-inset ring-black/10 rounded-lg pointer-events-none" />
@@ -1178,8 +1229,8 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
                                               <Maximize2 size={14} className="text-white drop-shadow-md" />
                                             </div>
                                           </div>
-                                        ) : null
-                                      ))}
+                                        ) : null;
+                                      })}
                                     </div>
                                   </div>
                                 );
@@ -1188,10 +1239,12 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
                               const singleAtt = (msg.attachments && msg.attachments.length === 1) ? msg.attachments[0] : msg.attachment;
                               if (!singleAtt) return null;
 
+                              const isSingleExpired = singleAtt.isExpired || (singleAtt.uploadedAt && isAttachmentExpired(singleAtt.uploadedAt, singleAtt.expiresAt));
+
                               return (
                                 <div className={`w-full flex flex-col ${isMe ? 'items-end' : 'items-start'} ${displayContent ? 'mt-1.5 pt-1.5 border-t border-gray-200/80' : ''}`}>
                                   {/* If Expired: */}
-                                  {singleAtt.isExpired ? (
+                                  {isSingleExpired ? (
                                     <div className="flex items-center gap-2 text-[11px] p-2 bg-amber-50 border border-amber-200/60 rounded-md text-amber-800">
                                       <AlertTriangle size={14} className="text-amber-600 flex-shrink-0" />
                                       <span>Attachment expired and permanently deleted.</span>
@@ -1220,13 +1273,12 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
                                         className={`rounded-lg overflow-hidden relative max-w-sm max-h-60 bg-white border border-gray-200 shadow-2xs cursor-pointer group/img transition-all hover:border-gray-300 ${isMe ? 'ml-auto' : ''}`}
                                         title="Click to view larger image"
                                       >
-                                        <Image
+                                        <ChatImageAttachment
                                           src={singleAtt.url}
                                           alt={singleAtt.name || 'Image'}
                                           width={320}
                                           height={200}
-                                          className="object-cover w-full h-auto transition-transform duration-200 group-hover/img:scale-[1.02]"
-                                          unoptimized
+                                          priority
                                         />
                                         <div className="absolute inset-0 bg-black/0 group-hover/img:bg-black/20 transition-all flex items-center justify-center opacity-0 group-hover/img:opacity-100">
                                           <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-black/70 text-white text-[11px] font-bold backdrop-blur-xs shadow-lg transform translate-y-1 group-hover/img:translate-y-0 transition-all">

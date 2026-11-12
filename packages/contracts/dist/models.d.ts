@@ -25,6 +25,7 @@ export interface ChatAttachment {
     type: AttachmentType;
     name: string;
     url: string;
+    objectKey?: string;
     downloadUrl?: string;
     thumbnailUrl?: string;
     size?: number;

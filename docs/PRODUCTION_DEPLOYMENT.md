@@ -106,7 +106,7 @@ server {
 
         proxy_pass http://orqland_backend;
         proxy_http_version 1.1;
-        prhttps://mail.google.com/mail/u/0/#search/Shaju%40openpurpl.com/KtbxLxgGDSTMtrxcJvZBHXSWHXfJDWScjVoxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;

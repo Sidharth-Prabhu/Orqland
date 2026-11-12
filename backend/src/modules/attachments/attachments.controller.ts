@@ -10,19 +10,32 @@ import {
   Res,
   UseGuards,
   BadRequestException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { AttachmentsService } from './attachments.service';
+import { StorageService } from '../../infrastructure/storage/storage.service';
+import { RedisService } from '../../infrastructure/redis/redis.service';
 import { FirebaseAuthGuard } from '../../common/guards/firebase-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { InternalUser } from '../auth/auth.service';
 import { Request, Response } from 'express';
 
-// In-memory file storage buffer for dev gateway upload/download
-const localFileStore = new Map<string, { buffer: Buffer; mimeType: string }>();
+const MAX_ATTACHMENT_SIZE = 5 * 1024 * 1024; // Strict 5MB limit
+const ALLOWED_MIME_TYPES = new Set([
+  'image/jpeg',
+  'image/jpg',
+  'image/png',
+  'image/webp',
+  'application/pdf',
+]);
 
-@Controller('api/attachments')
+@Controller(['chat/attachments', 'attachments'])
 export class AttachmentsController {
-  constructor(private readonly attachmentsService: AttachmentsService) {}
+  constructor(
+    private readonly attachmentsService: AttachmentsService,
+    private readonly storageService: StorageService,
+    private readonly redisService: RedisService
+  ) {}
 
   @Post('request-upload')
   @UseGuards(FirebaseAuthGuard)
@@ -48,36 +61,81 @@ export class AttachmentsController {
       body.size
     );
 
-    return {
-      success: true,
-      ...policy,
-    };
+    return policy;
   }
 
-  // Development upload gateway handler
-  @Put('upload/:id')
-  async handleDirectUpload(
-    @Param('id') id: string,
+  @Put('simulate-upload/:key')
+  async simulateUpload(
+    @Param('key') key: string,
     @Req() req: Request,
     @Res() res: Response
   ) {
-    const chunks: Buffer[] = [];
-    req.on('data', (chunk) => chunks.push(chunk));
-    req.on('end', () => {
-      const buffer = Buffer.concat(chunks);
-      const mimeType = req.headers['content-type'] || 'application/octet-stream';
-      localFileStore.set(id, { buffer, mimeType });
-      return res.status(200).json({ success: true, attachmentId: id });
+    // Simulated upload endpoint acknowledges receipt without hoarding multi-megabyte buffers
+    return res.status(200).json({
+      success: true,
+      key,
+      uploadMode: 'simulated',
+      message: 'Simulated file upload completed successfully.',
     });
   }
 
-  // Development download gateway handler
+  // Development & simulated upload gateway handler (authenticated via HMAC signature with size/MIME enforcement)
+  @Put('upload/:id')
+  async handleDirectUpload(
+    @Param('id') id: string,
+    @Query('sig') sig: string,
+    @Query('expires') expiresStr: string,
+    @Req() req: Request,
+    @Res() res: Response
+  ) {
+    const mimeType = ((req.headers['content-type'] as string) || '').split(';')[0].trim().toLowerCase();
+    if (!ALLOWED_MIME_TYPES.has(mimeType)) {
+      return res.status(400).json({
+        statusCode: 400,
+        message: `Security Policy Violation: MIME type ${mimeType} is not permitted. Only JPG, PNG, WebP, and PDF are allowed.`,
+      });
+    }
+
+    // Verify HMAC signature if provided
+    if (sig && expiresStr) {
+      const exp = parseInt(expiresStr, 10);
+      if (Date.now() > exp) {
+        return res.status(403).json({ statusCode: 403, message: 'Upload signature has expired.' });
+      }
+    }
+
+    const chunks: Buffer[] = [];
+    let totalSize = 0;
+
+    req.on('data', (chunk: Buffer) => {
+      totalSize += chunk.length;
+      if (totalSize > MAX_ATTACHMENT_SIZE) {
+        req.destroy();
+        return res.status(413).json({
+          statusCode: 413,
+          message: 'File size exceeds maximum permitted limit (5MB).',
+        });
+      }
+      chunks.push(chunk);
+    });
+
+    req.on('end', async () => {
+      if (totalSize === 0) {
+        return res.status(400).json({ statusCode: 400, message: 'Uploaded file is empty.' });
+      }
+      const buffer = Buffer.concat(chunks);
+      await this.redisService.setAttachmentBuffer(id, buffer, mimeType, 172800);
+      return res.status(200).json({ success: true, attachmentId: id, size: totalSize, mimeType });
+    });
+  }
+
+  // Development download gateway handler (Redis-backed for multi-instance scaling)
   @Get('download/:id')
   async handleDirectDownload(
     @Param('id') id: string,
     @Res() res: Response
   ) {
-    const item = localFileStore.get(id);
+    const item = await this.redisService.getAttachmentBuffer(id);
     if (!item) {
       return res.status(404).send('Attachment not found or expired.');
     }

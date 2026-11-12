@@ -9,12 +9,16 @@ export const CHAT_EVENTS = {
   CONVERSATION_LEAVE: 'conversation:leave',
   MESSAGE_SEND: 'message:send',
   MESSAGE_READ: 'message:read',
+  MESSAGE_EDIT: 'message:edit',
+  MESSAGE_DELETE: 'message:delete',
   TYPING_START: 'typing:start',
   TYPING_STOP: 'typing:stop',
 
   // Server -> Sender / Room / Users
   MESSAGE_ACK: 'message:ack',
   MESSAGE_NEW: 'message:new',
+  MESSAGE_EDITED: 'message:edited',
+  MESSAGE_DELETED: 'message:deleted',
   MESSAGE_READ_UPDATE: 'message:read:update',
   TYPING_UPDATE: 'typing:update',
   PRESENCE_UPDATE: 'presence:update',
@@ -62,6 +66,43 @@ export interface MarkReadPayload {
 
 export interface TypingPayload {
   conversationId: string;
+}
+
+export interface EditMessagePayload {
+  conversationId: string;
+  messageId: string;
+  content: string;
+}
+
+export interface DeleteMessagePayload {
+  conversationId: string;
+  messageId: string;
+}
+
+export interface MessageEditedPayload {
+  conversationId: string;
+  messageId: string;
+  content: string;
+  isEdited: boolean;
+  editedAt: number;
+}
+
+export interface MessageDeletedPayload {
+  conversationId: string;
+  messageId: string;
+  deletedForEveryone: boolean;
+  deletedAt: number;
+}
+
+export interface ConversationUpdatedPayload {
+  conversationId: string;
+  lastMessage?: string;
+  lastMessageTime?: string;
+  lastMessageTimestamp?: number;
+  status?: 'active' | 'ended';
+  unreadByClient?: number;
+  unreadByWorkspace?: number;
+  endedBy?: string;
 }
 
 // Server -> Client Payloads

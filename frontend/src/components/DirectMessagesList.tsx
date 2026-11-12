@@ -29,7 +29,6 @@ export const DirectMessagesList: React.FC<DirectMessagesListProps> = ({
   style,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
-  const [activeTab, setActiveTab] = useState<'all' | 'open' | 'waiting' | 'resolved'>('all');
   const [wsidCopied, setWsidCopied] = useState(false);
   const [businessStatus, setBusinessStatus] = useState<'Closed' | 'Open'>(
     businessProfile?.businessStatus || 'Open'
@@ -61,70 +60,8 @@ export const DirectMessagesList: React.FC<DirectMessagesListProps> = ({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  // Adaptively categorize conversation for viewer
-  const getConversationCategory = (conv: Conversation): 'open' | 'waiting' | 'resolved' => {
-    if (conv.status === 'ended') {
-      return 'resolved';
-    }
-
-    const messages = conv.messages || [];
-    const lastMsg = messages.length > 0 ? messages[messages.length - 1] : null;
-
-    if (!lastMsg) {
-      return 'open';
-    }
-
-    if (isBusiness) {
-      // Business viewer: if business sent the last message, waiting on client
-      const isLastFromMe =
-        lastMsg.isMe ||
-        (lastMsg.senderEmail && conv.businessEmail && lastMsg.senderEmail.toLowerCase() === conv.businessEmail.toLowerCase());
-
-      if (conv.unreadCount > 0) {
-        return 'open';
-      }
-      return isLastFromMe ? 'waiting' : 'open';
-    } else {
-      // Client viewer: if client sent the last message, waiting on business
-      const isLastFromMe =
-        lastMsg.isMe ||
-        (lastMsg.senderEmail && conv.clientEmail && lastMsg.senderEmail.toLowerCase() === conv.clientEmail.toLowerCase());
-
-      if (conv.unreadCount > 0) {
-        return 'open';
-      }
-      return isLastFromMe ? 'waiting' : 'open';
-    }
-  };
-
-  // Compute live counts for each grouping tab
-  const counts = useMemo(() => {
-    let open = 0;
-    let waiting = 0;
-    let resolved = 0;
-
-    conversations.forEach((conv) => {
-      const cat = getConversationCategory(conv);
-      if (cat === 'open') open++;
-      else if (cat === 'waiting') waiting++;
-      else if (cat === 'resolved') resolved++;
-    });
-
-    return {
-      all: conversations.length,
-      open,
-      waiting,
-      resolved,
-    };
-  }, [conversations, isBusiness]);
-
-  // Filter conversations by active tab and search query
+  // Filter conversations by search query
   const filteredConversations = conversations.filter((conv) => {
-    if (activeTab !== 'all') {
-      const cat = getConversationCategory(conv);
-      if (cat !== activeTab) return false;
-    }
-
     if (searchQuery.trim()) {
       const query = searchQuery.toLowerCase();
       const matchName = conv.participant.name.toLowerCase().includes(query);
@@ -191,105 +128,6 @@ export const DirectMessagesList: React.FC<DirectMessagesListProps> = ({
             )}
           </div>
         </div>
-
-        {/* Grouping Filter Pills matching screenshot */}
-        <div className="flex items-center gap-1.5 pt-0.5 overflow-x-auto no-scrollbar">
-          {/* All */}
-          <button
-            type="button"
-            onClick={() => setActiveTab('all')}
-            className={`flex items-center px-2.5 py-1 rounded-md text-xs font-semibold transition-all cursor-pointer flex-shrink-0 select-none ${
-              activeTab === 'all'
-                ? 'bg-[#5b52f9] text-white shadow-xs'
-                : 'bg-[#eeeff4] text-gray-700 hover:bg-gray-200/80'
-            }`}
-          >
-            <span>All</span>
-            {counts.all > 0 && (
-              <span
-                className={`ml-1.5 text-[10px] font-bold px-1.5 py-0.2 rounded leading-tight ${
-                  activeTab === 'all'
-                    ? 'bg-white/25 text-white'
-                    : 'bg-gray-200/90 text-gray-600'
-                }`}
-              >
-                {counts.all}
-              </span>
-            )}
-          </button>
-
-          {/* Open */}
-          <button
-            type="button"
-            onClick={() => setActiveTab('open')}
-            className={`flex items-center px-2.5 py-1 rounded-md text-xs font-semibold transition-all cursor-pointer flex-shrink-0 select-none ${
-              activeTab === 'open'
-                ? 'bg-[#5b52f9] text-white shadow-xs'
-                : 'bg-[#eeeff4] text-gray-700 hover:bg-gray-200/80'
-            }`}
-          >
-            <span>Open</span>
-            {counts.open > 0 && (
-              <span
-                className={`ml-1.5 text-[10px] font-bold px-1.5 py-0.2 rounded leading-tight ${
-                  activeTab === 'open'
-                    ? 'bg-white/25 text-white'
-                    : 'bg-gray-200/90 text-gray-600'
-                }`}
-              >
-                {counts.open}
-              </span>
-            )}
-          </button>
-
-          {/* Waiting */}
-          <button
-            type="button"
-            onClick={() => setActiveTab('waiting')}
-            className={`flex items-center px-2.5 py-1 rounded-md text-xs font-semibold transition-all cursor-pointer flex-shrink-0 select-none ${
-              activeTab === 'waiting'
-                ? 'bg-[#5b52f9] text-white shadow-xs'
-                : 'bg-[#eeeff4] text-gray-700 hover:bg-gray-200/80'
-            }`}
-          >
-            <span>Waiting</span>
-            {counts.waiting > 0 && (
-              <span
-                className={`ml-1.5 text-[10px] font-bold px-1.5 py-0.2 rounded leading-tight ${
-                  activeTab === 'waiting'
-                    ? 'bg-white/25 text-white'
-                    : 'bg-gray-200/90 text-gray-600'
-                }`}
-              >
-                {counts.waiting}
-              </span>
-            )}
-          </button>
-
-          {/* Resolved */}
-          <button
-            type="button"
-            onClick={() => setActiveTab('resolved')}
-            className={`flex items-center px-2.5 py-1 rounded-md text-xs font-semibold transition-all cursor-pointer flex-shrink-0 select-none ${
-              activeTab === 'resolved'
-                ? 'bg-[#5b52f9] text-white shadow-xs'
-                : 'bg-[#eeeff4] text-gray-700 hover:bg-gray-200/80'
-            }`}
-          >
-            <span>Resolved</span>
-            {counts.resolved > 0 && (
-              <span
-                className={`ml-1.5 text-[10px] font-bold px-1.5 py-0.2 rounded leading-tight ${
-                  activeTab === 'resolved'
-                    ? 'bg-white/25 text-white'
-                    : 'bg-gray-200/90 text-gray-600'
-                }`}
-              >
-                {counts.resolved}
-              </span>
-            )}
-          </button>
-        </div>
       </div>
 
       {/* Conversations List */}
@@ -301,8 +139,6 @@ export const DirectMessagesList: React.FC<DirectMessagesListProps> = ({
             <p className="text-[11px] text-gray-400 mt-1 max-w-[210px] leading-relaxed">
               {searchQuery
                 ? 'No conversations match your search.'
-                : activeTab !== 'all'
-                ? `No ${activeTab} conversations right now.`
                 : !isBusiness
                 ? 'Click "New" above to search for a business and start a conversation.'
                 : 'Waiting for clients to initiate conversations with your business.'}
@@ -330,12 +166,6 @@ export const DirectMessagesList: React.FC<DirectMessagesListProps> = ({
                     name={conv.participant.name}
                     size={38}
                   />
-                  {conv.participant.isOnline && !isEnded && (
-                    <span
-                      className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-emerald-500 ring-2 ring-white"
-                      title="Online"
-                    />
-                  )}
                 </div>
 
                 {/* Contact Info and Message Preview */}

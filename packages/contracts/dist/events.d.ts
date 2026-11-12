@@ -7,10 +7,14 @@ export declare const CHAT_EVENTS: {
     readonly CONVERSATION_LEAVE: "conversation:leave";
     readonly MESSAGE_SEND: "message:send";
     readonly MESSAGE_READ: "message:read";
+    readonly MESSAGE_EDIT: "message:edit";
+    readonly MESSAGE_DELETE: "message:delete";
     readonly TYPING_START: "typing:start";
     readonly TYPING_STOP: "typing:stop";
     readonly MESSAGE_ACK: "message:ack";
     readonly MESSAGE_NEW: "message:new";
+    readonly MESSAGE_EDITED: "message:edited";
+    readonly MESSAGE_DELETED: "message:deleted";
     readonly MESSAGE_READ_UPDATE: "message:read:update";
     readonly TYPING_UPDATE: "typing:update";
     readonly PRESENCE_UPDATE: "presence:update";
@@ -51,6 +55,38 @@ export interface MarkReadPayload {
 }
 export interface TypingPayload {
     conversationId: string;
+}
+export interface EditMessagePayload {
+    conversationId: string;
+    messageId: string;
+    content: string;
+}
+export interface DeleteMessagePayload {
+    conversationId: string;
+    messageId: string;
+}
+export interface MessageEditedPayload {
+    conversationId: string;
+    messageId: string;
+    content: string;
+    isEdited: boolean;
+    editedAt: number;
+}
+export interface MessageDeletedPayload {
+    conversationId: string;
+    messageId: string;
+    deletedForEveryone: boolean;
+    deletedAt: number;
+}
+export interface ConversationUpdatedPayload {
+    conversationId: string;
+    lastMessage?: string;
+    lastMessageTime?: string;
+    lastMessageTimestamp?: number;
+    status?: 'active' | 'ended';
+    unreadByClient?: number;
+    unreadByWorkspace?: number;
+    endedBy?: string;
 }
 export interface MessageAckPayload {
     success: boolean;

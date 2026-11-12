@@ -25,11 +25,14 @@ import { NotificationsService } from '../modules/notifications/notifications.ser
 import { AuthService, InternalUser } from '../modules/auth/auth.service';
 import { FirebaseAdminService } from '../modules/auth/firebase-admin.service';
 
+import { WsAuthGuard } from '../common/guards/ws-auth.guard';
+
 @WebSocketGateway({
   cors: {
     origin: '*',
   },
 })
+@UseGuards(WsAuthGuard)
 export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
   server!: Server;
@@ -52,25 +55,24 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         client.handshake?.headers?.authorization;
 
       if (!token) {
-        this.logger.warn(`WS connection without token from ${client.id}`);
-        // Allow connection in local dev if DEV_BYPASS or fallback exists, otherwise disconnect
-        const devEmail = (client.handshake?.auth?.email as string) || 'mailtosidharth.me@gmail.com';
-        const user = await this.authService.findUserByEmail(devEmail);
-        if (user) {
-          client.data.user = user;
-        } else {
-          client.disconnect();
-          return;
-        }
-      } else {
-        const decoded = await this.firebaseAdmin.verifyIdToken(token);
-        const user = await this.authService.resolveOrCreateUser(decoded);
-        client.data.user = user;
+        this.logger.warn(`WS connection rejected: Missing token from client ${client.id}`);
+        client.emit(CHAT_EVENTS.ERROR, {
+          code: 'UNAUTHORIZED',
+          message: 'Authentication token required for WebSocket connection.',
+        });
+        client.disconnect(true);
+        return;
       }
 
-      const user: InternalUser = client.data.user;
-      // Join personal room for targeted alerts and cross-room events
+      const decoded = await this.firebaseAdmin.verifyIdToken(token);
+      const user = await this.authService.resolveOrCreateUser(decoded);
+      client.data.user = user;
+
+      // Join personal room and email room for targeted alerts and cross-room events
       await client.join(`user:${user.id}`);
+      if (user.email) {
+        await client.join(`user:email:${user.email.toLowerCase()}`);
+      }
 
       // Track online presence
       const becameOnline = await this.presenceService.trackConnection(user.id, client.id);
@@ -86,7 +88,11 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
       this.logger.log(`WS Client connected: ${client.id} (User: ${user.email})`);
     } catch (err: any) {
       this.logger.error(`WS Authentication failed for ${client.id}:`, err?.message);
-      client.disconnect();
+      client.emit(CHAT_EVENTS.ERROR, {
+        code: 'UNAUTHORIZED',
+        message: 'Invalid or expired WebSocket handshake token.',
+      });
+      client.disconnect(true);
     }
   }
 
@@ -137,6 +143,108 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     await client.leave(`conversation:${payload.conversationId}`);
   }
 
+  /**
+   * Broadcast message to conversation and direct recipient user room, and trigger push notification
+   */
+  async broadcastNewMessage(createdMessage: ChatMessage, sender: InternalUser) {
+    // 1. Broadcast to conversation room
+    this.server.to(`conversation:${createdMessage.conversationId}`).emit(CHAT_EVENTS.MESSAGE_NEW, {
+      ...createdMessage,
+      isMe: false,
+    });
+
+    try {
+      const conv = await this.conversationsService.getConversation(createdMessage.conversationId, sender);
+      const otherParticipantId = conv.clientId === sender.id ? conv.businessId : conv.clientId;
+      const otherParticipantEmail =
+        conv.clientId === sender.id ? conv.businessEmail : conv.clientEmail;
+
+      // 2. Broadcast to recipient personal room & email room (guarantees delivery if recipient is minimized/in another tab)
+      if (otherParticipantId) {
+        this.server.to(`user:${otherParticipantId}`).emit(CHAT_EVENTS.MESSAGE_NEW, {
+          ...createdMessage,
+          isMe: false,
+        });
+
+        // 3. Emit conversation updated event to conversation room and recipient user room
+        const convUpdatePayload = {
+          conversationId: createdMessage.conversationId,
+          lastMessage: createdMessage.content,
+          lastMessageTime: createdMessage.timestamp,
+          lastMessageTimestamp: createdMessage.createdAt,
+        };
+        this.server.to(`conversation:${createdMessage.conversationId}`).emit(CHAT_EVENTS.CONVERSATION_UPDATED, convUpdatePayload);
+        this.server.to(`user:${otherParticipantId}`).emit(CHAT_EVENTS.CONVERSATION_UPDATED, convUpdatePayload);
+
+        if (otherParticipantEmail) {
+          this.server.to(`user:email:${otherParticipantEmail.toLowerCase()}`).emit(CHAT_EVENTS.MESSAGE_NEW, {
+            ...createdMessage,
+            isMe: false,
+          });
+          this.server.to(`user:email:${otherParticipantEmail.toLowerCase()}`).emit(CHAT_EVENTS.CONVERSATION_UPDATED, convUpdatePayload);
+        }
+
+        // 4. Trigger push notification for other participant
+        await this.notificationsService.sendPushNotification({
+          recipientUserId: otherParticipantId,
+          recipientEmail: otherParticipantEmail,
+          senderName: sender.name,
+          conversationId: createdMessage.conversationId,
+          hasAttachment: Boolean(createdMessage.attachments && createdMessage.attachments.length > 0),
+        });
+      }
+    } catch (e: any) {
+      this.logger.error(`Error in broadcastNewMessage: ${e?.message}`);
+    }
+  }
+
+  /**
+   * Broadcast message edit to conversation room
+   */
+  broadcastMessageEdited(conversationId: string, editedMessage: ChatMessage) {
+    this.server.to(`conversation:${conversationId}`).emit(CHAT_EVENTS.MESSAGE_EDITED, {
+      conversationId,
+      messageId: editedMessage.id,
+      content: editedMessage.content,
+      isEdited: true,
+      editedAt: editedMessage.editedAt || Date.now(),
+    });
+  }
+
+  /**
+   * Broadcast message deletion to conversation room
+   */
+  broadcastMessageDeleted(conversationId: string, messageId: string) {
+    this.server.to(`conversation:${conversationId}`).emit(CHAT_EVENTS.MESSAGE_DELETED, {
+      conversationId,
+      messageId,
+      deletedForEveryone: true,
+      deletedAt: Date.now(),
+    });
+  }
+
+  /**
+   * Broadcast read update to conversation room
+   */
+  broadcastMessageRead(conversationId: string, userId: string, lastReadMessageId?: string) {
+    this.server.to(`conversation:${conversationId}`).emit(CHAT_EVENTS.MESSAGE_READ_UPDATE, {
+      conversationId,
+      userId,
+      lastReadMessageId,
+      timestamp: Date.now(),
+    });
+  }
+
+  /**
+   * Broadcast conversation updated event (e.g. ended, reopened, or updated)
+   */
+  broadcastConversationUpdated(conversationId: string, payload: any) {
+    this.server.to(`conversation:${conversationId}`).emit(CHAT_EVENTS.CONVERSATION_UPDATED, {
+      conversationId,
+      ...payload,
+    });
+  }
+
   @SubscribeMessage(CHAT_EVENTS.MESSAGE_SEND)
   async handleSendMessage(
     @ConnectedSocket() client: Socket,
@@ -164,27 +272,8 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         createdAt: createdMessage.createdAt,
       });
 
-      // 2. Broadcast message to conversation room (so all participants receive it)
-      this.server.to(`conversation:${payload.conversationId}`).emit(CHAT_EVENTS.MESSAGE_NEW, {
-        ...createdMessage,
-        isMe: false, // will be evaluated per receiver client
-      });
-
-      // 3. Emit conversation updated event to conversation room
-      this.server.to(`conversation:${payload.conversationId}`).emit(CHAT_EVENTS.CONVERSATION_UPDATED, {
-        conversationId: payload.conversationId,
-        lastMessage: createdMessage.content,
-        lastMessageTime: createdMessage.timestamp,
-        lastMessageTimestamp: createdMessage.createdAt,
-      });
-
-      // 4. Trigger push notification for other participant
-      const conv = await this.conversationsService.getConversation(payload.conversationId, user);
-      await this.notificationsService.sendPushNotification({
-        senderName: user.name,
-        conversationId: payload.conversationId,
-        hasAttachment: Boolean(payload.attachments && payload.attachments.length > 0),
-      });
+      // 2. Broadcast and notify via shared helper
+      await this.broadcastNewMessage(createdMessage, user);
     } catch (err: any) {
       this.logger.error(`Failed to handle message:send: ${err?.message}`);
       client.emit(CHAT_EVENTS.ERROR, {

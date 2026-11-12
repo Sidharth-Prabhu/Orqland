@@ -67,6 +67,12 @@
   }
 }
 
+@keyframes shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
 .animate-pulse-dot {
   animation: orqland-pulse-fast 1.2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }

@@ -27,6 +27,7 @@ export interface ChatAttachment {
   type: AttachmentType;
   name: string;
   url: string;
+  objectKey?: string;
   thumbnailUrl?: string; // Rendered first-page thumbnail or preview image
   size?: number; // bytes
   mimeType?: string;
@@ -47,6 +48,7 @@ export interface ChatMessage {
   timestamp: string; // e.g. "10:42 AM"
   date: string; // e.g. "Today"
   createdAt?: number; // millisecond epoch for strict chronological ordering
+  idempotencyKey?: string;
   isMe?: boolean;
   status?: MessageDeliveryStatus;
   attachment?: ChatAttachment;

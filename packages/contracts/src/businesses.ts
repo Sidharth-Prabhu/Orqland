@@ -12,22 +12,35 @@ export interface BusinessDirectoryItem {
   services: string[];
 }
 
-export const BUSINESS_DIRECTORY: BusinessDirectoryItem[] = [
+export const INITIAL_BUSINESSES: BusinessDirectoryItem[] = [
   {
-    id: 'biz-sidharth',
+    id: 'a0000000-0000-0000-0000-000000000001',
     name: "Sidharth Prabhu's Workspace",
     email: 'mailtosidharth.me@gmail.com',
     category: 'General Consultation & Tech',
-    description: 'Official direct consultation channel for technology architecture, software engineering, and strategic advisory.',
+    description: 'Official company workspace for technology architecture, software engineering, and strategic advisory.',
     avatar: 'https://lh3.googleusercontent.com/a/ACg8ocK77osqTQ76zfsDwgj5r5kQZiKsBHRgjI-1NqrM62sChRVilDG5dA=s96-c',
-    wsid: 'WS#ORQLAND#01',
+    wsid: 'WS#ALPHA#01',
     isOnline: true,
     status: 'Open',
     verified: true,
     services: ['General Consultation', 'Software Engineering', 'Technical Architecture', 'Code Review'],
   },
   {
-    id: 'biz-tech',
+    id: 'a0000000-0000-0000-0000-00000000000a',
+    name: 'Alpha Strategic Workspace',
+    email: 'workspace.alpha@orqland.test',
+    category: 'General Consultation & Tech',
+    description: 'Official workspace for technology architecture, software engineering, and strategic advisory.',
+    avatar: '',
+    wsid: 'WS#ALPHA#01',
+    isOnline: true,
+    status: 'Open',
+    verified: true,
+    services: ['General Consultation', 'Software Engineering', 'Technical Architecture', 'Code Review'],
+  },
+  {
+    id: 'a0000000-0000-0000-0000-000000000002',
     name: 'Orqland Tech Solutions',
     email: 'tech@orqland.com',
     category: 'Cloud & Infrastructure',
@@ -40,7 +53,7 @@ export const BUSINESS_DIRECTORY: BusinessDirectoryItem[] = [
     services: ['Cloud Architecture', 'DevOps & CI/CD', 'API Development', 'Security Audits'],
   },
   {
-    id: 'biz-design',
+    id: 'a0000000-0000-0000-0000-000000000003',
     name: 'SJ Softwares & Design Studio',
     email: 'sjsoftwares@orqland.com',
     category: 'UI/UX & Product Design',
@@ -53,7 +66,7 @@ export const BUSINESS_DIRECTORY: BusinessDirectoryItem[] = [
     services: ['UI/UX Design', 'Design Systems', 'Brand Identity', 'Product Prototyping'],
   },
   {
-    id: 'biz-finance',
+    id: 'a0000000-0000-0000-0000-000000000004',
     name: 'Orqland Financial Governance',
     email: 'finance@orqland.com',
     category: 'Financial Advisory',
@@ -66,7 +79,7 @@ export const BUSINESS_DIRECTORY: BusinessDirectoryItem[] = [
     services: ['Financial Governance', 'Tax Advisory', 'Corporate Audits', 'Budget Planning'],
   },
   {
-    id: 'biz-legal',
+    id: 'a0000000-0000-0000-0000-000000000005',
     name: 'Orqland Legal & Compliance Partners',
     email: 'legal@orqland.com',
     category: 'Legal & Compliance',
@@ -79,7 +92,7 @@ export const BUSINESS_DIRECTORY: BusinessDirectoryItem[] = [
     services: ['Contract Law', 'IP Protection', 'Regulatory Compliance', 'Data Privacy'],
   },
   {
-    id: 'biz-strategy',
+    id: 'a0000000-0000-0000-0000-000000000006',
     name: 'Apex Strategic Consulting',
     email: 'consulting@orqland.com',
     category: 'Business Strategy',
@@ -92,4 +105,6 @@ export const BUSINESS_DIRECTORY: BusinessDirectoryItem[] = [
     services: ['Business Transformation', 'Operational Scaling', 'Market Research', 'Executive Advisory'],
   },
 ];
+
+export const BUSINESS_DIRECTORY = INITIAL_BUSINESSES;
 

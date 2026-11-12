@@ -1,5 +1,10 @@
 import { Conversation, ChatMessage, ChatAttachment } from '@/types/chat';
 import { auth } from './firebase';
+import { isAttachmentExpired } from './security';
+import { deleteFileFromFirebaseStorage } from './firebaseStorage';
+import { getChatSocket } from './socket/client';
+import { CHAT_EVENTS } from '@orqland/contracts';
+import { checkMessageRateLimit, checkGeneralRateLimit } from './rateLimiter';
 
 const CHANNEL_NAME = 'orqland_chat_channel';
 const STORAGE_PREFIX = 'orqland_cache_v4_';
@@ -140,11 +145,90 @@ function notifyCrossTab() {
   }
 }
 
+// Automatically purge attachments older than 48 hours across memory, local cache, and Cloud Storage
+function enforceAttachmentRetention(convs: Conversation[]): Conversation[] {
+  let hasExpired = false;
+  const expiredUrlsToDelete: string[] = [];
+
+  const cleaned = convs.map((conv) => {
+    let convModified = false;
+    const messages = conv.messages.map((msg) => {
+      let msgModified = false;
+      let singleAtt = msg.attachment;
+      let atts = msg.attachments;
+
+      if (
+        singleAtt &&
+        singleAtt.type !== 'location' &&
+        (!singleAtt.isExpired && isAttachmentExpired(singleAtt.uploadedAt, singleAtt.expiresAt))
+      ) {
+        msgModified = true;
+        if (singleAtt.url) expiredUrlsToDelete.push(singleAtt.url);
+        singleAtt = {
+          ...singleAtt,
+          isExpired: true,
+          url: '',
+          thumbnailUrl: '',
+        };
+      }
+
+      if (atts && atts.length > 0) {
+        const cleanedAtts = atts.map((a) => {
+          if (
+            a.type !== 'location' &&
+            (!a.isExpired && isAttachmentExpired(a.uploadedAt, a.expiresAt))
+          ) {
+            msgModified = true;
+            if (a.url) expiredUrlsToDelete.push(a.url);
+            return {
+              ...a,
+              isExpired: true,
+              url: '',
+              thumbnailUrl: '',
+            };
+          }
+          return a;
+        });
+        if (msgModified) {
+          atts = cleanedAtts;
+        }
+      }
+
+      if (msgModified) {
+        convModified = true;
+        hasExpired = true;
+        return {
+          ...msg,
+          attachment: singleAtt,
+          attachments: atts,
+        };
+      }
+      return msg;
+    });
+
+    if (convModified) {
+      return { ...conv, messages };
+    }
+    return conv;
+  });
+
+  // Permanently delete expired files from Firebase Cloud Storage in the background
+  if (expiredUrlsToDelete.length > 0 && typeof window !== 'undefined') {
+    expiredUrlsToDelete.forEach((url) => {
+      deleteFileFromFirebaseStorage(url).catch((err) =>
+        console.warn('Could not delete expired file from Firebase:', err)
+      );
+    });
+  }
+
+  return cleaned;
+}
+
 // Load cached conversations (instant 0ms response on page refresh)
 function loadCachedConversations(email?: string | null): Conversation[] {
   const norm = (email || '').trim().toLowerCase() || 'default';
   if (inMemoryCache[norm] && inMemoryCache[norm].length > 0) {
-    return inMemoryCache[norm];
+    return enforceAttachmentRetention(inMemoryCache[norm]);
   }
   if (typeof window === 'undefined') return [];
   try {
@@ -152,8 +236,9 @@ function loadCachedConversations(email?: string | null): Conversation[] {
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed) && parsed.length > 0) {
-      inMemoryCache[norm] = parsed;
-      return parsed;
+      const sanitized = enforceAttachmentRetention(parsed);
+      inMemoryCache[norm] = sanitized;
+      return sanitized;
     }
     return [];
   } catch {
@@ -185,9 +270,10 @@ export const chatService = {
   async syncUserProfile(email: string, name?: string | null, avatar?: string | null) {
     if (!email) return;
     try {
+      const headers = await getAuthHeaders(email);
       await fetch('/api/user/sync', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ email, name, avatar }),
       });
     } catch {
@@ -201,9 +287,10 @@ export const chatService = {
   async sendHeartbeat(email: string) {
     if (!email) return;
     try {
+      const headers = await getAuthHeaders(email);
       await fetch('/api/user/heartbeat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ email }),
       });
     } catch {}
@@ -237,8 +324,9 @@ export const chatService = {
         : null;
 
       if (list) {
-        saveCachedConversations(list, email);
-        return list;
+        const purged = enforceAttachmentRetention(list);
+        saveCachedConversations(purged, email);
+        return purged;
       }
       return loadCachedConversations(email);
     } catch (err) {
@@ -293,6 +381,7 @@ export const chatService = {
     content: string;
     attachment?: ChatAttachment;
     attachments?: ChatAttachment[];
+    optimisticId?: string;
   }): Promise<{ message: ChatMessage; conversation: Conversation }> {
     const {
       conversationId,
@@ -302,12 +391,19 @@ export const chatService = {
       content,
       attachment,
       attachments,
+      optimisticId,
     } = params;
+
+    // Client-side rate limiting enforcement
+    const rateLimitCheck = checkMessageRateLimit(senderEmail);
+    if (!rateLimitCheck.allowed) {
+      throw new Error(rateLimitCheck.reason || 'Message rate limit exceeded. Please wait a moment.');
+    }
 
     // Optimistic UI update
     const now = Date.now();
     const optimisticMessage: ChatMessage = {
-      id: `msg-${now}-${Math.random().toString(36).slice(2, 6)}`,
+      id: optimisticId || `msg-${now}-${Math.random().toString(36).slice(2, 6)}`,
       conversationId,
       senderId: senderEmail,
       senderEmail,
@@ -360,23 +456,38 @@ export const chatService = {
     }
 
     // Replace with confirmed server conversation and message
-    const updatedConv: Conversation = data.conversation || data.data?.conversation || data.data;
-    const confirmedMsg: ChatMessage = data.message || data.data?.message || optimisticMessage;
-    const latest = loadCachedConversations(senderEmail).map((c) =>
-      c.id === updatedConv.id ? updatedConv : c
-    );
-    saveCachedConversations(latest, senderEmail);
+    const confirmedMsg: ChatMessage = (data.data?.id ? data.data : data.message) || optimisticMessage;
+    const latestConvs = loadCachedConversations(senderEmail);
+    const convIdx = latestConvs.findIndex((c) => c.id === conversationId);
+    let targetConv: Conversation | null = null;
 
-    return { message: confirmedMsg, conversation: updatedConv };
+    if (convIdx >= 0) {
+      latestConvs[convIdx] = {
+        ...latestConvs[convIdx],
+        messages: latestConvs[convIdx].messages.map((m) =>
+          m.id === optimisticMessage.id || (m.status === 'sending' && m.content === content)
+            ? { ...confirmedMsg, status: 'delivered', isMe: true }
+            : m
+        ),
+      };
+      targetConv = latestConvs[convIdx];
+      saveCachedConversations(latestConvs, senderEmail);
+    }
+
+    // Cross-tab broadcast so other open tabs/windows update their view immediately
+    notifyCrossTab();
+
+    return { message: confirmedMsg, conversation: targetConv || (data.conversation as Conversation) };
   },
 
   /**
    * Delete Chat (Business only - clears business view)
    */
   async deleteChat(conversationId: string, userEmail: string): Promise<Conversation> {
+    const authHeaders = await getAuthHeaders(userEmail);
     const res = await fetch('/api/chat/delete', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders,
       body: JSON.stringify({ conversationId, userEmail }),
     });
 
@@ -404,9 +515,29 @@ export const chatService = {
     messageId: string,
     userEmail: string
   ): Promise<Conversation> {
+    // If message contains media attachments, delete them from Firebase Cloud Storage
+    const existingConvs = loadCachedConversations(userEmail);
+    const existingConv = existingConvs.find((c) => c.id === conversationId);
+    const targetMsg = existingConv?.messages.find((m) => m.id === messageId);
+    if (targetMsg) {
+      const urlsToDelete: string[] = [];
+      if (targetMsg.attachment?.url) urlsToDelete.push(targetMsg.attachment.url);
+      if (targetMsg.attachments && targetMsg.attachments.length > 0) {
+        targetMsg.attachments.forEach((a) => {
+          if (a.url) urlsToDelete.push(a.url);
+        });
+      }
+      urlsToDelete.forEach((url) => {
+        deleteFileFromFirebaseStorage(url).catch((err) =>
+          console.warn('Could not delete attachment file from Firebase Storage:', err)
+        );
+      });
+    }
+
+    const authHeaders = await getAuthHeaders(userEmail);
     const res = await fetch('/api/chat/delete-message', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders,
       body: JSON.stringify({ conversationId, messageId, userEmail }),
     });
 
@@ -434,9 +565,10 @@ export const chatService = {
     newContent: string,
     userEmail: string
   ): Promise<Conversation> {
+    const authHeaders = await getAuthHeaders(userEmail);
     const res = await fetch('/api/chat/edit-message', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders,
       body: JSON.stringify({ conversationId, messageId, newContent, userEmail }),
     });
 
@@ -459,9 +591,10 @@ export const chatService = {
    * End Chat (Client only - ends chat session)
    */
   async endChat(conversationId: string, userEmail: string): Promise<Conversation> {
+    const authHeaders = await getAuthHeaders(userEmail);
     const res = await fetch('/api/chat/end', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders,
       body: JSON.stringify({ conversationId, userEmail }),
     });
 
@@ -484,9 +617,10 @@ export const chatService = {
    * Reopen an ended Chat session
    */
   async reopenChat(conversationId: string, userEmail: string, workspaceName?: string): Promise<Conversation> {
+    const authHeaders = await getAuthHeaders(userEmail);
     const res = await fetch('/api/chat/reopen', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders,
       body: JSON.stringify({ conversationId, userEmail, workspaceName }),
     });
 
@@ -532,6 +666,14 @@ export const chatService = {
         headers: authHeaders,
         body: JSON.stringify({ conversationId, readerEmail }),
       });
+
+      // Also emit via WebSocket so all open tabs and active rooms receive immediate read receipt
+      try {
+        const socket = getChatSocket(undefined, readerEmail);
+        if (socket && socket.connected) {
+          socket.emit(CHAT_EVENTS.MESSAGE_READ, { conversationId });
+        }
+      } catch {}
     } catch {
       // Background sync, suppress network errors
     }
@@ -604,24 +746,56 @@ export const chatService = {
       document.addEventListener('visibilitychange', handleVisibility);
     }
 
-    // 4. Background polling loop (every 1s) to guarantee fast cross-device & cross-browser synchronization
-    // Also dispatch heartbeat ping periodically every 20s
-    let heartbeatTick = 0;
-    chatService.sendHeartbeat(email);
+    // 4. Real-time WebSocket synchronization (replaces aggressive 1s HTTP polling)
+    let socketCleanup: (() => void) | null = null;
+    if (typeof window !== 'undefined') {
+      try {
+        const socket = getChatSocket(undefined, email);
 
-    const interval = setInterval(() => {
-      heartbeatTick++;
-      if (heartbeatTick % 20 === 0) {
-        chatService.sendHeartbeat(email);
+        const onSocketMessage = (payload: any) => {
+          handleRemoteUpdate();
+        };
+
+        const onPresenceUpdate = (payload: any) => {
+          handleRemoteUpdate();
+        };
+
+        const onConversationUpdate = (payload: any) => {
+          handleRemoteUpdate();
+        };
+
+        const onReadUpdate = (payload: any) => {
+          handleRemoteUpdate();
+        };
+
+        socket.on(CHAT_EVENTS.MESSAGE_NEW, onSocketMessage);
+        socket.on(CHAT_EVENTS.PRESENCE_UPDATE, onPresenceUpdate);
+        socket.on(CHAT_EVENTS.CONVERSATION_UPDATED, onConversationUpdate);
+        socket.on(CHAT_EVENTS.MESSAGE_READ_UPDATE, onReadUpdate);
+
+        socketCleanup = () => {
+          socket.off(CHAT_EVENTS.MESSAGE_NEW, onSocketMessage);
+          socket.off(CHAT_EVENTS.PRESENCE_UPDATE, onPresenceUpdate);
+          socket.off(CHAT_EVENTS.CONVERSATION_UPDATED, onConversationUpdate);
+          socket.off(CHAT_EVENTS.MESSAGE_READ_UPDATE, onReadUpdate);
+        };
+      } catch (e) {
+        console.warn('[chatService] WebSocket setup deferred:', e);
       }
-      chatService.fetchConversations(email).then((fresh) => {
-        onUpdate(fresh);
-      });
-    }, 1000);
+    }
+
+    // 5. Periodic heartbeat ping (every 30s) instead of 1000ms polling
+    chatService.sendHeartbeat(email);
+    const interval = setInterval(() => {
+      chatService.sendHeartbeat(email);
+    }, 30000);
 
     return () => {
       activeSubscribers.get(email)?.delete(onUpdate);
       clearInterval(interval);
+      if (socketCleanup) {
+        socketCleanup();
+      }
       if (bc) {
         bc.removeEventListener('message', handleBcMessage);
       }

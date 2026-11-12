@@ -1,0 +1,212 @@
+# ------------------------------------------------------
+# THIS FILE WAS AUTOMATICALLY GENERATED (DO NOT MODIFY)
+# ------------------------------------------------------
+
+type BookingInfoGql {
+  serviceName: String
+  status: String
+}
+
+type ChatAttachmentGql {
+  downloadUrl: String
+  expiresAt: Float!
+  id: ID!
+  isExpired: Boolean
+  locationData: LocationDataGql
+  mimeType: String
+  name: String!
+  size: Int
+  thumbnailUrl: String
+  type: String!
+  uploadedAt: Float!
+  url: String!
+}
+
+input ChatAttachmentInputGql {
+  downloadUrl: String
+  expiresAt: Float!
+  id: ID!
+  isExpired: Boolean
+  locationData: LocationDataInputGql
+  mimeType: String
+  name: String!
+  size: Int
+  thumbnailUrl: String
+  type: String!
+  uploadedAt: Float!
+  url: String!
+}
+
+type ChatMessageGql {
+  attachment: ChatAttachmentGql
+  attachments: [ChatAttachmentGql!]
+  content: String!
+  conversationId: ID!
+  createdAt: Float!
+  date: String!
+  deletedByBusiness: Boolean
+  deletedByClient: Boolean
+  deletedForEveryone: Boolean
+  editedAt: Float
+  id: ID!
+  idempotencyKey: String
+  isEdited: Boolean
+  isMe: Boolean
+  senderAvatar: String!
+  senderEmail: String
+  senderId: ID!
+  senderName: String!
+  sequenceNumber: Int
+  status: String
+  timestamp: String!
+}
+
+type ConversationGql {
+  bookingInfo: BookingInfoGql
+  businessAvatar: String!
+  businessDeletedAt: Float
+  businessEmail: String!
+  businessId: ID!
+  businessName: String!
+  clientAvatar: String!
+  clientDeletedAt: Float
+  clientEmail: String!
+  clientId: ID!
+  clientName: String!
+  deletedByBusiness: Boolean
+  deletedForClient: Boolean
+  endedAt: Float
+  endedBy: String
+  id: ID!
+  lastMessage: String!
+  lastMessageTime: String!
+  lastMessageTimestamp: Float
+  messages: [ChatMessageGql!]!
+  participant: ConversationParticipantGql!
+  status: String!
+  unreadByBusiness: Int
+  unreadByClient: Int
+  unreadCount: Int!
+  workspaceInfo: WorkspaceInfoGql!
+}
+
+type ConversationParticipantGql {
+  avatar: String!
+  email: String
+  handle: String
+  id: ID!
+  isOnline: Boolean!
+  joinedAt: Float
+  lastReadAt: Float
+  lastReadMessageId: String
+  name: String!
+  role: String!
+}
+
+input DeleteMessageInputGql {
+  conversationId: ID!
+  messageId: ID!
+}
+
+input EditMessageInputGql {
+  content: String!
+  conversationId: ID!
+  messageId: ID!
+}
+
+type HeartbeatResultGql {
+  success: Boolean!
+  timestamp: Float!
+}
+
+input InitiateConversationInputGql {
+  businessId: String!
+  category: String!
+  initialMessage: String
+}
+
+type LocationDataGql {
+  label: String
+  latitude: Float!
+  longitude: Float!
+  mapUrl: String!
+}
+
+input LocationDataInputGql {
+  label: String
+  latitude: Float!
+  longitude: Float!
+  mapUrl: String!
+}
+
+type Mutation {
+  deleteConversationView(id: ID!): ConversationGql!
+  deleteMessage(input: DeleteMessageInputGql!): ChatMessageGql!
+  editMessage(input: EditMessageInputGql!): ChatMessageGql!
+  endConversation(id: ID!): ConversationGql!
+  heartbeat: HeartbeatResultGql!
+  initiateConversation(input: InitiateConversationInputGql!): ConversationGql!
+  markConversationAsRead(id: ID!): Boolean!
+  reopenConversation(id: ID!, input: ReopenConversationInputGql): ConversationGql!
+  requestSignedUpload(input: RequestSignedUploadInputGql!): SignedUploadPolicyGql!
+  sendMessage(input: SendMessageInputGql!): ChatMessageGql!
+}
+
+type PaginatedMessagesGql {
+  hasMore: Boolean!
+  messages: [ChatMessageGql!]!
+  nextCursor: String
+}
+
+type Query {
+  conversation(id: ID!): ConversationGql!
+  conversations: [ConversationGql!]!
+  me: UserProfileGql!
+  messages(beforeTimestamp: Float, conversationId: ID!, limit: Int = 50): PaginatedMessagesGql!
+}
+
+input ReopenConversationInputGql {
+  workspaceName: String
+}
+
+input RequestSignedUploadInputGql {
+  conversationId: ID!
+  fileName: String!
+  mimeType: String!
+  size: Int!
+}
+
+input SendMessageInputGql {
+  attachment: ChatAttachmentInputGql
+  attachments: [ChatAttachmentInputGql!]
+  content: String!
+  conversationId: ID!
+  idempotencyKey: String
+}
+
+type SignedUploadPolicyGql {
+  downloadUrl: String!
+  expiresAt: Float!
+  key: String!
+  uploadUrl: String!
+}
+
+type UserProfileGql {
+  avatar: String!
+  businessStatus: String
+  email: String!
+  firebaseUid: String
+  handle: String!
+  id: ID!
+  isOnline: Boolean
+  location: String
+  name: String!
+  role: String!
+  wsid: String
+}
+
+type WorkspaceInfoGql {
+  description: String!
+  name: String!
+  type: String!
+}

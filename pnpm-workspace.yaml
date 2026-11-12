@@ -3,6 +3,7 @@ packages:
   - 'frontend'
   - 'packages/*'
 allowBuilds:
+  '@apollo/protobufjs': true
   '@firebase/util': true
   esbuild: true
   protobufjs: true

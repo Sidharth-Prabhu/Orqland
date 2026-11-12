@@ -27,6 +27,7 @@
       "@firebase/util",
       "esbuild",
       "protobufjs",
+      "@apollo/protobufjs",
       "@nestjs/core"
     ]
   }

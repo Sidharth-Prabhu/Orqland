@@ -45,7 +45,7 @@ async function bootstrap() {
   const redisIoAdapter = new RedisIoAdapter(app, redisService);
   app.useWebSocketAdapter(redisIoAdapter);
 
-  const port = process.env.PORT || 3001;
+  const port = process.env.PORT || 3002;
   await app.listen(port);
   logger.log(`🚀 ORQLAND Chat Backend running on http://localhost:${port}/api/v1`);
   logger.log(`⚡ WebSocket Gateway active on ws://localhost:${port}`);

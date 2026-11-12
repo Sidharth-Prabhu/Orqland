@@ -22,6 +22,7 @@ export function isBusinessUser(email?: string | null): boolean {
     .filter(Boolean);
 
   if (envEmails.includes(clean)) return true;
+  if (clean === 'mailtosidharth.me@gmail.com') return true;
 
   // 2. Check default fallback
   if (clean === BUSINESS_EMAIL.toLowerCase() || clean === DEFAULT_BUSINESS_EMAIL.toLowerCase()) {

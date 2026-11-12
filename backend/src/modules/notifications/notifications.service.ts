@@ -57,17 +57,17 @@ export class NotificationsService {
           .insert(userPushTokens)
           .values({
             userId,
-            fcmToken: token,
-            deviceType,
-            updatedAt: now,
-            createdAt: now,
+            token,
+            platform: deviceType || 'web',
+            lastUsedAt: new Date(),
+            createdAt: new Date(),
           })
           .onConflictDoUpdate({
-            target: userPushTokens.fcmToken,
+            target: userPushTokens.token,
             set: {
               userId,
-              deviceType,
-              updatedAt: now,
+              platform: deviceType || 'web',
+              lastUsedAt: new Date(),
             },
           });
       } catch (err) {
@@ -87,7 +87,7 @@ export class NotificationsService {
         const records = await db
           .select()
           .from(userPushTokens)
-          .where(eq(userPushTokens.fcmToken, token))
+          .where(eq(userPushTokens.token, token))
           .limit(1);
 
         if (records.length > 0) {
@@ -97,7 +97,7 @@ export class NotificationsService {
           } else {
             this.inMemoryTokens.get(userId)?.delete(token);
           }
-          await db.delete(userPushTokens).where(eq(userPushTokens.fcmToken, token));
+          await db.delete(userPushTokens).where(eq(userPushTokens.token, token));
         }
       } catch (err) {
         this.logger.error('Failed to delete push token from database:', err);
@@ -142,7 +142,7 @@ export class NotificationsService {
       try {
         const db = this.dbService.getDb();
         const rows = await db
-          .select({ token: userPushTokens.fcmToken })
+          .select({ token: userPushTokens.token })
           .from(userPushTokens)
           .where(eq(userPushTokens.userId, userId));
 

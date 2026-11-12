@@ -1,0 +1,83 @@
+[32m[Nest] 9298  - [39m11/12/2026, 10:57:54 AM [32m    LOG[39m [38;5;3m[NestFactory] [39m[32mStarting Nest application...[39m
+[32m[Nest] 9298  - [39m11/12/2026, 10:57:55 AM [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mAppModule dependencies initialized[39m[38;5;3m +7ms[39m
+[32m[Nest] 9298  - [39m11/12/2026, 10:57:55 AM [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mConfigHostModule dependencies initialized[39m[38;5;3m +1ms[39m
+[32m[Nest] 9298  - [39m11/12/2026, 10:57:55 AM [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mDiscoveryModule dependencies initialized[39m[38;5;3m +0ms[39m
+[32m[Nest] 9298  - [39m11/12/2026, 10:57:55 AM [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mConfigModule dependencies initialized[39m[38;5;3m +0ms[39m
+[32m[Nest] 9298  - [39m11/12/2026, 10:57:55 AM [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mScheduleModule dependencies initialized[39m[38;5;3m +0ms[39m
+[32m[Nest] 9298  - [39m11/12/2026, 10:57:55 AM [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mDatabaseModule dependencies initialized[39m[38;5;3m +0ms[39m
+[32m[Nest] 9298  - [39m11/12/2026, 10:57:55 AM [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mRedisModule dependencies initialized[39m[38;5;3m +0ms[39m
+[32m[Nest] 9298  - [39m11/12/2026, 10:57:55 AM [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mStorageModule dependencies initialized[39m[38;5;3m +0ms[39m
+[32m[Nest] 9298  - [39m11/12/2026, 10:57:55 AM [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mHealthModule dependencies initialized[39m[38;5;3m +0ms[39m
+[32m[Nest] 9298  - [39m11/12/2026, 10:57:55 AM [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mGraphQLSchemaBuilderModule dependencies initialized[39m[38;5;3m +1ms[39m
+[32m[Nest] 9298  - [39m11/12/2026, 10:57:55 AM [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mGatewaysModule dependencies initialized[39m[38;5;3m +0ms[39m
+[32m[Nest] 9298  - [39m11/12/2026, 10:57:55 AM [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mNotificationsModule dependencies initialized[39m[38;5;3m +0ms[39m
+[32m[Nest] 9298  - [39m11/12/2026, 10:57:55 AM [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mChatGraphqlModule dependencies initialized[39m[38;5;3m +0ms[39m
+[32m[Nest] 9298  - [39m11/12/2026, 10:57:55 AM [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mMessagesModule dependencies initialized[39m[38;5;3m +0ms[39m
+[32m[Nest] 9298  - [39m11/12/2026, 10:57:55 AM [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mPresenceModule dependencies initialized[39m[38;5;3m +0ms[39m
+[32m[Nest] 9298  - [39m11/12/2026, 10:57:55 AM [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mAuthModule dependencies initialized[39m[38;5;3m +0ms[39m
+[32m[Nest] 9298  - [39m11/12/2026, 10:57:55 AM [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mGraphQLModule dependencies initialized[39m[38;5;3m +0ms[39m
+[32m[Nest] 9298  - [39m11/12/2026, 10:57:55 AM [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mAttachmentsModule dependencies initialized[39m[38;5;3m +0ms[39m
+[32m[Nest] 9298  - [39m11/12/2026, 10:57:55 AM [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mConversationsModule dependencies initialized[39m[38;5;3m +0ms[39m
+[33m[Nest] 9298  - [39m11/12/2026, 10:57:55 AM [33m   WARN[39m [38;5;3m[RedisIoAdapter] [39m[33mSocket.IO running in single-instance memory adapter mode (Redis not connected).[39m
+[32m[Nest] 9298  - [39m11/12/2026, 10:57:55 AM [32m    LOG[39m [38;5;3m[WebSocketsController] [39m[32mChatGateway subscribed to the "conversation:join" message[39m[38;5;3m +4ms[39m
+[32m[Nest] 9298  - [39m11/12/2026, 10:57:55 AM [32m    LOG[39m [38;5;3m[WebSocketsController] [39m[32mChatGateway subscribed to the "conversation:leave" message[39m[38;5;3m +0ms[39m
+[32m[Nest] 9298  - [39m11/12/2026, 10:57:55 AM [32m    LOG[39m [38;5;3m[WebSocketsController] [39m[32mChatGateway subscribed to the "message:send" message[39m[38;5;3m +0ms[39m
+[32m[Nest] 9298  - [39m11/12/2026, 10:57:55 AM [32m    LOG[39m [38;5;3m[WebSocketsController] [39m[32mChatGateway subscribed to the "message:read" message[39m[38;5;3m +0ms[39m
+[32m[Nest] 9298  - [39m11/12/2026, 10:57:55 AM [32m    LOG[39m [38;5;3m[WebSocketsController] [39m[32mChatGateway subscribed to the "typing:start" message[39m[38;5;3m +0ms[39m
+[32m[Nest] 9298  - [39m11/12/2026, 10:57:55 AM [32m    LOG[39m [38;5;3m[WebSocketsController] [39m[32mChatGateway subscribed to the "typing:stop" message[39m[38;5;3m +0ms[39m
+[32m[Nest] 9298  - [39m11/12/2026, 10:57:55 AM [32m    LOG[39m [38;5;3m[RoutesResolver] [39m[32mAuthController {/api/auth} (version: 1):[39m[38;5;3m +0ms[39m
+[32m[Nest] 9298  - [39m11/12/2026, 10:57:55 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/api/auth/me, GET} (version: 1) route[39m[38;5;3m +1ms[39m
+[32m[Nest] 9298  - [39m11/12/2026, 10:57:55 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/api/auth/businesses, GET} (version: 1) route[39m[38;5;3m +0ms[39m
+[32m[Nest] 9298  - [39m11/12/2026, 10:57:55 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/api/auth/sync, POST} (version: 1) route[39m[38;5;3m +1ms[39m
+[32m[Nest] 9298  - [39m11/12/2026, 10:57:55 AM [32m    LOG[39m [38;5;3m[RoutesResolver] [39m[32mPresenceController {/api/presence} (version: 1):[39m[38;5;3m +0ms[39m
+[32m[Nest] 9298  - [39m11/12/2026, 10:57:55 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/api/presence/heartbeat, POST} (version: 1) route[39m[38;5;3m +0ms[39m
+[32m[Nest] 9298  - [39m11/12/2026, 10:57:55 AM [32m    LOG[39m [38;5;3m[RoutesResolver] [39m[32mAttachmentsController {/api/chat/attachments} (version: 1):[39m[38;5;3m +0ms[39m
+[32m[Nest] 9298  - [39m11/12/2026, 10:57:55 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/api/chat/attachments/request-upload, POST} (version: 1) route[39m[38;5;3m +0ms[39m
+[32m[Nest] 9298  - [39m11/12/2026, 10:57:55 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/api/chat/attachments/simulate-upload/:key, PUT} (version: 1) route[39m[38;5;3m +0ms[39m
+[32m[Nest] 9298  - [39m11/12/2026, 10:57:55 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/api/chat/attachments/upload/:id, PUT} (version: 1) route[39m[38;5;3m +0ms[39m
+[32m[Nest] 9298  - [39m11/12/2026, 10:57:55 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/api/chat/attachments/download/:id, GET} (version: 1) route[39m[38;5;3m +0ms[39m
+[32m[Nest] 9298  - [39m11/12/2026, 10:57:55 AM [32m    LOG[39m [38;5;3m[RoutesResolver] [39m[32mAttachmentsController {/api/attachments} (version: 1):[39m[38;5;3m +0ms[39m
+[32m[Nest] 9298  - [39m11/12/2026, 10:57:55 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/api/attachments/request-upload, POST} (version: 1) route[39m[38;5;3m +0ms[39m
+[32m[Nest] 9298  - [39m11/12/2026, 10:57:55 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/api/attachments/simulate-upload/:key, PUT} (version: 1) route[39m[38;5;3m +0ms[39m
+[32m[Nest] 9298  - [39m11/12/2026, 10:57:55 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/api/attachments/upload/:id, PUT} (version: 1) route[39m[38;5;3m +0ms[39m
+[32m[Nest] 9298  - [39m11/12/2026, 10:57:55 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/api/attachments/download/:id, GET} (version: 1) route[39m[38;5;3m +0ms[39m
+[32m[Nest] 9298  - [39m11/12/2026, 10:57:55 AM [32m    LOG[39m [38;5;3m[RoutesResolver] [39m[32mMessagesController {/api/messages} (version: 1):[39m[38;5;3m +0ms[39m
+[32m[Nest] 9298  - [39m11/12/2026, 10:57:55 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/api/messages, GET} (version: 1) route[39m[38;5;3m +1ms[39m
+[32m[Nest] 9298  - [39m11/12/2026, 10:57:55 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/api/messages, POST} (version: 1) route[39m[38;5;3m +0ms[39m
+[32m[Nest] 9298  - [39m11/12/2026, 10:57:55 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/api/messages/:id, PATCH} (version: 1) route[39m[38;5;3m +0ms[39m
+[32m[Nest] 9298  - [39m11/12/2026, 10:57:55 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/api/messages/:id, DELETE} (version: 1) route[39m[38;5;3m +0ms[39m
+[32m[Nest] 9298  - [39m11/12/2026, 10:57:55 AM [32m    LOG[39m [38;5;3m[RoutesResolver] [39m[32mConversationsController {/api/conversations} (version: 1):[39m[38;5;3m +0ms[39m
+[32m[Nest] 9298  - [39m11/12/2026, 10:57:55 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/api/conversations, GET} (version: 1) route[39m[38;5;3m +0ms[39m
+[32m[Nest] 9298  - [39m11/12/2026, 10:57:55 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/api/conversations, POST} (version: 1) route[39m[38;5;3m +0ms[39m
+[32m[Nest] 9298  - [39m11/12/2026, 10:57:55 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/api/conversations/:id, GET} (version: 1) route[39m[38;5;3m +0ms[39m
+[32m[Nest] 9298  - [39m11/12/2026, 10:57:55 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/api/conversations/:id/end, POST} (version: 1) route[39m[38;5;3m +0ms[39m
+[32m[Nest] 9298  - [39m11/12/2026, 10:57:55 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/api/conversations/:id/reopen, POST} (version: 1) route[39m[38;5;3m +0ms[39m
+[32m[Nest] 9298  - [39m11/12/2026, 10:57:55 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/api/conversations/:id/read, POST} (version: 1) route[39m[38;5;3m +0ms[39m
+[32m[Nest] 9298  - [39m11/12/2026, 10:57:55 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/api/conversations/:id, DELETE} (version: 1) route[39m[38;5;3m +0ms[39m
+[32m[Nest] 9298  - [39m11/12/2026, 10:57:55 AM [32m    LOG[39m [38;5;3m[RoutesResolver] [39m[32mNotificationsController {/api/notifications} (version: 1):[39m[38;5;3m +0ms[39m
+[32m[Nest] 9298  - [39m11/12/2026, 10:57:55 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/api/notifications/register-token, POST} (version: 1) route[39m[38;5;3m +0ms[39m
+[32m[Nest] 9298  - [39m11/12/2026, 10:57:55 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/api/notifications/unregister-token, DELETE} (version: 1) route[39m[38;5;3m +0ms[39m
+[32m[Nest] 9298  - [39m11/12/2026, 10:57:55 AM [32m    LOG[39m [38;5;3m[RoutesResolver] [39m[32mHealthController {/api/health} (version: 1):[39m[38;5;3m +0ms[39m
+[32m[Nest] 9298  - [39m11/12/2026, 10:57:55 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/api/health, GET} (version: 1) route[39m[38;5;3m +0ms[39m
+[33m[Nest] 9298  - [39m11/12/2026, 10:57:55 AM [33m   WARN[39m [38;5;3m[DatabaseService] [39m[33mPostgreSQL not reachable at postgres://postgres:postgres@localhost:5432/orqland_db (password authentication failed for user "postgres"). Running in mock/memory-resilient development mode.[39m
+[ioredis] Unhandled error event: AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1350:18)
+    at afterConnectMultiple (node:net:2016:7)
+[33m[Nest] 9298  - [39m11/12/2026, 10:57:55 AM [33m   WARN[39m [38;5;3m[RedisService] [39m[33mRedis not reachable at redis://localhost:6379 (Connection is closed.). Running in resilient in-memory development mode.[39m
+[32m[Nest] 9298  - [39m11/12/2026, 10:57:55 AM [32m    LOG[39m [38;5;3m[FirebaseAdminService] [39m[32mFirebase Admin initialized with project ID: openpurpl-f8dd3[39m
+[ioredis] Unhandled error event: AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1350:18)
+    at afterConnectMultiple (node:net:2016:7)
+[32m[Nest] 9298  - [39m11/12/2026, 10:57:55 AM [32m    LOG[39m [38;5;3m[GraphQLModule] [39m[32mMapped {/graphql, POST} route[39m[38;5;3m +50ms[39m
+[32m[Nest] 9298  - [39m11/12/2026, 10:57:55 AM [32m    LOG[39m [38;5;3m[NestApplication] [39m[32mNest application successfully started[39m[38;5;3m +2ms[39m
+[32m[Nest] 9298  - [39m11/12/2026, 10:57:55 AM [32m    LOG[39m [38;5;3m[Bootstrap] [39m[32m🚀 ORQLAND Chat Backend running on http://localhost:3001/api/v1[39m
+[32m[Nest] 9298  - [39m11/12/2026, 10:57:55 AM [32m    LOG[39m [38;5;3m[Bootstrap] [39m[32m⚡ WebSocket Gateway active on ws://localhost:3001[39m
+[32m[Nest] 9298  - [39m11/12/2026, 10:58:03 AM [32m    LOG[39m [38;5;3m[HTTP] [39m[32mGET /api/v1/health completed in 0ms[39m
+[32m[Nest] 9298  - [39m11/12/2026, 11:00:00 AM [32m    LOG[39m [38;5;3m[AttachmentPurgeCronService] [39m[32m[AttachmentPurgeCron] Starting 48-hour attachment purge scan at 2026-11-12T05:30:00.011Z...[39m
+[32m[Nest] 9298  - [39m11/12/2026, 11:00:00 AM [32m    LOG[39m [38;5;3m[AttachmentPurgeCronService] [39m[32m[AttachmentPurgeCron] 48-hour purge scan completed. Purged 0 expired attachments.[39m
+[32m[Nest] 9298  - [39m11/12/2026, 12:00:00 PM [32m    LOG[39m [38;5;3m[AttachmentPurgeCronService] [39m[32m[AttachmentPurgeCron] Starting 48-hour attachment purge scan at 2026-11-12T06:30:00.003Z...[39m
+[32m[Nest] 9298  - [39m11/12/2026, 12:00:00 PM [32m    LOG[39m [38;5;3m[AttachmentPurgeCronService] [39m[32m[AttachmentPurgeCron] 48-hour purge scan completed. Purged 0 expired attachments.[39m
+[32m[Nest] 9298  - [39m11/12/2026, 1:00:00 PM [32m    LOG[39m [38;5;3m[AttachmentPurgeCronService] [39m[32m[AttachmentPurgeCron] Starting 48-hour attachment purge scan at 2026-11-12T07:30:00.016Z...[39m
+[32m[Nest] 9298  - [39m11/12/2026, 1:00:00 PM [32m    LOG[39m [38;5;3m[AttachmentPurgeCronService] [39m[32m[AttachmentPurgeCron] 48-hour purge scan completed. Purged 0 expired attachments.[39m
+[32m[Nest] 9298  - [39m11/12/2026, 2:00:00 PM [32m    LOG[39m [38;5;3m[AttachmentPurgeCronService] [39m[32m[AttachmentPurgeCron] Starting 48-hour attachment purge scan at 2026-11-12T08:30:00.017Z...[39m
+[32m[Nest] 9298  - [39m11/12/2026, 2:00:00 PM [32m    LOG[39m [38;5;3m[AttachmentPurgeCronService] [39m[32m[AttachmentPurgeCron] 48-hour purge scan completed. Purged 0 expired attachments.[39m

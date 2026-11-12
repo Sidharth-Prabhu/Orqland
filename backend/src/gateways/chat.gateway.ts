@@ -25,11 +25,14 @@ import { NotificationsService } from '../modules/notifications/notifications.ser
 import { AuthService, InternalUser } from '../modules/auth/auth.service';
 import { FirebaseAdminService } from '../modules/auth/firebase-admin.service';
 
+import { WsAuthGuard } from '../common/guards/ws-auth.guard';
+
 @WebSocketGateway({
   cors: {
     origin: '*',
   },
 })
+@UseGuards(WsAuthGuard)
 export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
   server!: Server;
@@ -52,34 +55,19 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         client.handshake?.headers?.authorization;
 
       if (!token) {
-        this.logger.warn(`WS connection without token from ${client.id}`);
-        // Allow connection in local dev if DEV_BYPASS or fallback exists, otherwise disconnect
-        const devEmail = client.handshake?.auth?.email as string | undefined;
-        if (!devEmail) {
-          client.disconnect();
-          return;
-        }
-        let user = await this.authService.findUserByEmail(devEmail);
-        if (!user) {
-          user = await this.authService.resolveOrCreateUser({
-            uid: `dev-user-${devEmail.replace(/[^a-zA-Z0-9]/g, '_')}`,
-            email: devEmail,
-            name: devEmail.split('@')[0],
-          });
-        }
-        if (user) {
-          client.data.user = user;
-        } else {
-          client.disconnect();
-          return;
-        }
-      } else {
-        const decoded = await this.firebaseAdmin.verifyIdToken(token);
-        const user = await this.authService.resolveOrCreateUser(decoded);
-        client.data.user = user;
+        this.logger.warn(`WS connection rejected: Missing token from client ${client.id}`);
+        client.emit(CHAT_EVENTS.ERROR, {
+          code: 'UNAUTHORIZED',
+          message: 'Authentication token required for WebSocket connection.',
+        });
+        client.disconnect(true);
+        return;
       }
 
-      const user: InternalUser = client.data.user;
+      const decoded = await this.firebaseAdmin.verifyIdToken(token);
+      const user = await this.authService.resolveOrCreateUser(decoded);
+      client.data.user = user;
+
       // Join personal room and email room for targeted alerts and cross-room events
       await client.join(`user:${user.id}`);
       if (user.email) {
@@ -100,7 +88,11 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
       this.logger.log(`WS Client connected: ${client.id} (User: ${user.email})`);
     } catch (err: any) {
       this.logger.error(`WS Authentication failed for ${client.id}:`, err?.message);
-      client.disconnect();
+      client.emit(CHAT_EVENTS.ERROR, {
+        code: 'UNAUTHORIZED',
+        message: 'Invalid or expired WebSocket handshake token.',
+      });
+      client.disconnect(true);
     }
   }
 
@@ -204,6 +196,53 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     } catch (e: any) {
       this.logger.error(`Error in broadcastNewMessage: ${e?.message}`);
     }
+  }
+
+  /**
+   * Broadcast message edit to conversation room
+   */
+  broadcastMessageEdited(conversationId: string, editedMessage: ChatMessage) {
+    this.server.to(`conversation:${conversationId}`).emit(CHAT_EVENTS.MESSAGE_EDITED, {
+      conversationId,
+      messageId: editedMessage.id,
+      content: editedMessage.content,
+      isEdited: true,
+      editedAt: editedMessage.editedAt || Date.now(),
+    });
+  }
+
+  /**
+   * Broadcast message deletion to conversation room
+   */
+  broadcastMessageDeleted(conversationId: string, messageId: string) {
+    this.server.to(`conversation:${conversationId}`).emit(CHAT_EVENTS.MESSAGE_DELETED, {
+      conversationId,
+      messageId,
+      deletedForEveryone: true,
+      deletedAt: Date.now(),
+    });
+  }
+
+  /**
+   * Broadcast read update to conversation room
+   */
+  broadcastMessageRead(conversationId: string, userId: string, lastReadMessageId?: string) {
+    this.server.to(`conversation:${conversationId}`).emit(CHAT_EVENTS.MESSAGE_READ_UPDATE, {
+      conversationId,
+      userId,
+      lastReadMessageId,
+      timestamp: Date.now(),
+    });
+  }
+
+  /**
+   * Broadcast conversation updated event (e.g. ended, reopened, or updated)
+   */
+  broadcastConversationUpdated(conversationId: string, payload: any) {
+    this.server.to(`conversation:${conversationId}`).emit(CHAT_EVENTS.CONVERSATION_UPDATED, {
+      conversationId,
+      ...payload,
+    });
   }
 
   @SubscribeMessage(CHAT_EVENTS.MESSAGE_SEND)

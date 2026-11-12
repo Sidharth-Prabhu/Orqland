@@ -46,7 +46,6 @@ services:
       DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-orqland_db}
       REDIS_URL: redis://redis:6379
       FRONTEND_URL: http://localhost:3000
-      BUSINESS_EMAIL: ${BUSINESS_EMAIL:-mailtosidharth.me@gmail.com}
     ports:
       - '3001:3001'
     depends_on:

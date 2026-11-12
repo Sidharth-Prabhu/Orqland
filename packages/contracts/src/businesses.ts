@@ -18,9 +18,22 @@ export const INITIAL_BUSINESSES: BusinessDirectoryItem[] = [
     name: "Sidharth Prabhu's Workspace",
     email: 'mailtosidharth.me@gmail.com',
     category: 'General Consultation & Tech',
-    description: 'Official direct consultation channel for technology architecture, software engineering, and strategic advisory.',
+    description: 'Official company workspace for technology architecture, software engineering, and strategic advisory.',
     avatar: 'https://lh3.googleusercontent.com/a/ACg8ocK77osqTQ76zfsDwgj5r5kQZiKsBHRgjI-1NqrM62sChRVilDG5dA=s96-c',
-    wsid: 'WS#ORQLAND#01',
+    wsid: 'WS#ALPHA#01',
+    isOnline: true,
+    status: 'Open',
+    verified: true,
+    services: ['General Consultation', 'Software Engineering', 'Technical Architecture', 'Code Review'],
+  },
+  {
+    id: 'a0000000-0000-0000-0000-00000000000a',
+    name: 'Alpha Strategic Workspace',
+    email: 'workspace.alpha@orqland.test',
+    category: 'General Consultation & Tech',
+    description: 'Official workspace for technology architecture, software engineering, and strategic advisory.',
+    avatar: '',
+    wsid: 'WS#ALPHA#01',
     isOnline: true,
     status: 'Open',
     verified: true,
@@ -92,3 +105,6 @@ export const INITIAL_BUSINESSES: BusinessDirectoryItem[] = [
     services: ['Business Transformation', 'Operational Scaling', 'Market Research', 'Executive Advisory'],
   },
 ];
+
+export const BUSINESS_DIRECTORY = INITIAL_BUSINESSES;
+

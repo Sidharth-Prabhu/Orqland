@@ -12,4 +12,5 @@ export interface BusinessDirectoryItem {
     services: string[];
 }
 export declare const INITIAL_BUSINESSES: BusinessDirectoryItem[];
+export declare const BUSINESS_DIRECTORY: BusinessDirectoryItem[];
 //# sourceMappingURL=businesses.d.ts.map

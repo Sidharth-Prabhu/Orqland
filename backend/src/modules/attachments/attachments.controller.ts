@@ -29,7 +29,7 @@ const ALLOWED_MIME_TYPES = new Set([
   'application/pdf',
 ]);
 
-@Controller('attachments')
+@Controller(['chat/attachments', 'attachments'])
 export class AttachmentsController {
   constructor(
     private readonly attachmentsService: AttachmentsService,
@@ -61,10 +61,22 @@ export class AttachmentsController {
       body.size
     );
 
-    return {
+    return policy;
+  }
+
+  @Put('simulate-upload/:key')
+  async simulateUpload(
+    @Param('key') key: string,
+    @Req() req: Request,
+    @Res() res: Response
+  ) {
+    // Simulated upload endpoint acknowledges receipt without hoarding multi-megabyte buffers
+    return res.status(200).json({
       success: true,
-      ...policy,
-    };
+      key,
+      uploadMode: 'simulated',
+      message: 'Simulated file upload completed successfully.',
+    });
   }
 
   // Development & simulated upload gateway handler (authenticated via HMAC signature with size/MIME enforcement)

@@ -24,7 +24,8 @@ export class StorageService {
       this.configService.get<string>('STORAGE_SIGNING_SECRET') ||
       crypto.randomBytes(32).toString('hex');
     this.publicBaseUrl =
-      this.configService.get<string>('APP_URL') || 'http://localhost:3001';
+      this.configService.get<string>('APP_URL') ||
+      `http://localhost:${this.configService.get<string>('PORT') || '3002'}`;
   }
 
   /**

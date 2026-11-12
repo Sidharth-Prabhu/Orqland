@@ -794,37 +794,7 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
             )}
           </div>
 
-          {/* Details Sidebar Toggle Button */}
-          {onToggleDetails && (
-            <button
-              type="button"
-              onClick={onToggleDetails}
-              className={`p-1.5 rounded-xl transition-all cursor-pointer ${
-                isDetailsOpen
-                  ? 'bg-blue-50 text-blue-600 ring-1 ring-blue-200'
-                  : 'text-gray-500 hover:text-gray-900 hover:bg-gray-100'
-              }`}
-              title={isDetailsOpen ? 'Hide conversation details' : 'Show conversation details'}
-              aria-label="Toggle Details"
-            >
-              <PanelRight size={17} />
-            </button>
-          )}
-
-          {/* End Chat Icon Button in Top Bar (Available when chat is active and onEndChat is provided) */}
-          {onEndChat && !isChatEnded && !isBusiness && (
-            <button
-              type="button"
-              onClick={() => setIsEndModalOpen(true)}
-              className="p-1.5 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-xl transition-colors cursor-pointer group"
-              title="End chat session"
-              aria-label="End Chat"
-            >
-              <Ban size={17} className="group-hover:scale-105 transition-transform" />
-            </button>
-          )}
-
-          {/* Options Dropdown: Chat controls (Close Chat, End Chat, Clear Chat) */}
+          {/* Options Dropdown: Chat controls (Close Chat, End Chat, Clear Chat) - Moved to first */}
           <div className="relative" ref={optionsDropdownRef}>
             <button
               onClick={() => setShowOptionsDropdown(!showOptionsDropdown)}
@@ -835,7 +805,7 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
             </button>
 
             {showOptionsDropdown && (
-              <div className="absolute right-0 mt-2 w-52 bg-white rounded-2xl shadow-xl border border-gray-100 p-1.5 z-40 animate-in fade-in zoom-in-95 duration-100 space-y-0.5">
+              <div className="absolute right-0 sm:right-auto sm:left-0 mt-2 w-52 bg-white rounded-2xl shadow-xl border border-gray-100 p-1.5 z-40 animate-in fade-in zoom-in-95 duration-100 space-y-0.5">
                 {/* Close Chat (Deselects conversation and returns to blank slate) */}
                 {onBackToList && (
                   <button
@@ -898,6 +868,36 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
               </div>
             )}
           </div>
+
+          {/* End Chat Icon Button in Top Bar (Red color) */}
+          {onEndChat && !isChatEnded && !isBusiness && (
+            <button
+              type="button"
+              onClick={() => setIsEndModalOpen(true)}
+              className="p-1.5 text-red-600 hover:text-red-700 hover:bg-red-50 rounded-xl transition-colors cursor-pointer group"
+              title="End chat session"
+              aria-label="End Chat"
+            >
+              <Ban size={17} className="text-red-600 group-hover:scale-105 transition-transform" />
+            </button>
+          )}
+
+          {/* Details Sidebar Toggle Button - Moved to last */}
+          {onToggleDetails && (
+            <button
+              type="button"
+              onClick={onToggleDetails}
+              className={`p-1.5 rounded-xl transition-all cursor-pointer ${
+                isDetailsOpen
+                  ? 'bg-blue-50 text-blue-600 ring-1 ring-blue-200'
+                  : 'text-gray-500 hover:text-gray-900 hover:bg-gray-100'
+              }`}
+              title={isDetailsOpen ? 'Hide conversation details' : 'Show conversation details'}
+              aria-label="Toggle Details"
+            >
+              <PanelRight size={17} />
+            </button>
+          )}
         </div>
       </div>
 

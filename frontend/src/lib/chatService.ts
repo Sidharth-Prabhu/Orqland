@@ -381,6 +381,7 @@ export const chatService = {
     content: string;
     attachment?: ChatAttachment;
     attachments?: ChatAttachment[];
+    optimisticId?: string;
   }): Promise<{ message: ChatMessage; conversation: Conversation }> {
     const {
       conversationId,
@@ -390,6 +391,7 @@ export const chatService = {
       content,
       attachment,
       attachments,
+      optimisticId,
     } = params;
 
     // Client-side rate limiting enforcement
@@ -401,7 +403,7 @@ export const chatService = {
     // Optimistic UI update
     const now = Date.now();
     const optimisticMessage: ChatMessage = {
-      id: `msg-${now}-${Math.random().toString(36).slice(2, 6)}`,
+      id: optimisticId || `msg-${now}-${Math.random().toString(36).slice(2, 6)}`,
       conversationId,
       senderId: senderEmail,
       senderEmail,
@@ -463,7 +465,9 @@ export const chatService = {
       latestConvs[convIdx] = {
         ...latestConvs[convIdx],
         messages: latestConvs[convIdx].messages.map((m) =>
-          m.id === optimisticMessage.id ? { ...confirmedMsg, status: 'delivered', isMe: true } : m
+          m.id === optimisticMessage.id || (m.status === 'sending' && m.content === content)
+            ? { ...confirmedMsg, status: 'delivered', isMe: true }
+            : m
         ),
       };
       targetConv = latestConvs[convIdx];
@@ -662,6 +666,14 @@ export const chatService = {
         headers: authHeaders,
         body: JSON.stringify({ conversationId, readerEmail }),
       });
+
+      // Also emit via WebSocket so all open tabs and active rooms receive immediate read receipt
+      try {
+        const socket = getChatSocket(undefined, readerEmail);
+        if (socket && socket.connected) {
+          socket.emit(CHAT_EVENTS.MESSAGE_READ, { conversationId });
+        }
+      } catch {}
     } catch {
       // Background sync, suppress network errors
     }
@@ -752,14 +764,20 @@ export const chatService = {
           handleRemoteUpdate();
         };
 
+        const onReadUpdate = (payload: any) => {
+          handleRemoteUpdate();
+        };
+
         socket.on(CHAT_EVENTS.MESSAGE_NEW, onSocketMessage);
         socket.on(CHAT_EVENTS.PRESENCE_UPDATE, onPresenceUpdate);
         socket.on(CHAT_EVENTS.CONVERSATION_UPDATED, onConversationUpdate);
+        socket.on(CHAT_EVENTS.MESSAGE_READ_UPDATE, onReadUpdate);
 
         socketCleanup = () => {
           socket.off(CHAT_EVENTS.MESSAGE_NEW, onSocketMessage);
           socket.off(CHAT_EVENTS.PRESENCE_UPDATE, onPresenceUpdate);
           socket.off(CHAT_EVENTS.CONVERSATION_UPDATED, onConversationUpdate);
+          socket.off(CHAT_EVENTS.MESSAGE_READ_UPDATE, onReadUpdate);
         };
       } catch (e) {
         console.warn('[chatService] WebSocket setup deferred:', e);

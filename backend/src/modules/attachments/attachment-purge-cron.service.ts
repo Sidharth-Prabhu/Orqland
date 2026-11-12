@@ -44,7 +44,7 @@ export class AttachmentPurgeCronService {
           .from(messageAttachments)
           .where(
             and(
-              lt(messageAttachments.expiresAt, now),
+              lt(messageAttachments.expiresAt, new Date(now)),
               eq(messageAttachments.isExpired, false)
             )
           );
@@ -54,9 +54,9 @@ export class AttachmentPurgeCronService {
 
           for (const item of expiredRecords) {
             try {
-              // Delete from storage backend (Firebase Storage / S3)
-              if (item.objectKey) {
-                await this.storageService.deleteObject(item.objectKey);
+              // Delete from storage backend
+              if (item.storageKey) {
+                await this.storageService.deleteObject(item.storageKey);
               }
 
               // Delete from Redis dev buffer if exists
@@ -68,7 +68,7 @@ export class AttachmentPurgeCronService {
                 .set({
                   isExpired: true,
                   url: '',
-                  uploadStatus: 'expired',
+                  expiredAt: new Date(now),
                 })
                 .where(eq(messageAttachments.id, item.id));
 

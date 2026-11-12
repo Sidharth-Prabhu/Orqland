@@ -503,3 +503,56 @@ export class RequestSignedUploadInputGql {
   @IsNumber()
   size!: number;
 }
+
+@ObjectType()
+export class OrqspaceGql {
+  @Field(() => ID)
+  id!: string;
+
+  @Field()
+  orqspaceCode!: string;
+
+  @Field()
+  name!: string;
+
+  @Field({ nullable: true })
+  logoUrl?: string;
+
+  @Field(() => ID)
+  ownerId!: string;
+
+  @Field(() => Boolean)
+  isActive!: boolean;
+
+  @Field({ nullable: true })
+  category?: string;
+
+  @Field({ nullable: true })
+  description?: string;
+}
+
+@InputType()
+export class RegisterPushTokenInputGql {
+  @Field()
+  @IsString()
+  token!: string;
+
+  @Field({ nullable: true })
+  @IsOptional()
+  @IsString()
+  platform?: string;
+}
+
+@InputType()
+export class RemovePushTokenInputGql {
+  @Field()
+  @IsString()
+  token!: string;
+}
+
+@InputType()
+export class ClearConversationHistoryInputGql {
+  @Field(() => ID)
+  @IsString()
+  conversationId!: string;
+}

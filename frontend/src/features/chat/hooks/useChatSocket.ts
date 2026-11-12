@@ -14,6 +14,11 @@ import { isPageInBackground, sendBrowserNotification } from '@/lib/browserNotifi
 
 interface UseChatSocketOptions {
   onNewMessage?: (msg: ChatMessage) => void;
+  onMessageAck?: (ack: { messageId: string; clientGeneratedId?: string; status: string }) => void;
+  onMessageEdited?: (data: { messageId: string; conversationId: string; content: string }) => void;
+  onMessageDeleted?: (data: { messageId: string; conversationId: string }) => void;
+  onMessageReadUpdate?: (data: { conversationId: string; readCount: number }) => void;
+  onConversationUpdated?: (data: { conversationId: string; lastMessage: string; lastMessageTime: string }) => void;
 }
 
 export function useChatSocket(
@@ -35,6 +40,9 @@ export function useChatSocket(
     async function initSocket() {
       if (user) {
         token = await user.getIdToken().catch(() => '');
+      }
+      if (!token && user?.email && process.env.NODE_ENV !== 'production') {
+        token = `mock-token-${user.email}`;
       }
 
       const socket = getChatSocket(token, user?.email || undefined);
@@ -143,7 +151,104 @@ export function useChatSocket(
         });
       };
 
+      // Handle message acknowledgment (status -> delivered)
+      const handleMessageAck = (ack: { clientGeneratedId?: string; messageId: string; status: string }) => {
+        optionsRef.current?.onMessageAck?.(ack);
+
+        queryClient.setQueryData<PaginatedMessagesResponseDto>(
+          ['messages', activeConversationId],
+          (old) => {
+            if (!old) return old;
+            return {
+              ...old,
+              messages: old.messages.map((m) =>
+                (ack.clientGeneratedId && (m.id === ack.clientGeneratedId || m.idempotencyKey === ack.clientGeneratedId)) ||
+                m.id === ack.messageId
+                  ? { ...m, id: ack.messageId, status: 'delivered' as const }
+                  : m
+              ),
+            };
+          }
+        );
+      };
+
+      // Handle message edited
+      const handleMessageEdited = (data: { messageId: string; conversationId: string; content: string }) => {
+        optionsRef.current?.onMessageEdited?.(data);
+
+        queryClient.setQueryData<PaginatedMessagesResponseDto>(
+          ['messages', data.conversationId],
+          (old) => {
+            if (!old) return old;
+            return {
+              ...old,
+              messages: old.messages.map((m) =>
+                m.id === data.messageId
+                  ? { ...m, content: data.content, isEdited: true, editedAt: Date.now() }
+                  : m
+              ),
+            };
+          }
+        );
+      };
+
+      // Handle message deleted
+      const handleMessageDeleted = (data: { messageId: string; conversationId: string }) => {
+        optionsRef.current?.onMessageDeleted?.(data);
+
+        queryClient.setQueryData<PaginatedMessagesResponseDto>(
+          ['messages', data.conversationId],
+          (old) => {
+            if (!old) return old;
+            return {
+              ...old,
+              messages: old.messages.map((m) =>
+                m.id === data.messageId
+                  ? { ...m, content: 'This message was deleted.', deletedForEveryone: true }
+                  : m
+              ),
+            };
+          }
+        );
+      };
+
+      // Handle message read update
+      const handleMessageReadUpdate = (data: { conversationId: string; readCount: number }) => {
+        optionsRef.current?.onMessageReadUpdate?.(data);
+
+        queryClient.setQueryData<Conversation[]>(['conversations', user?.email], (old) => {
+          if (!old) return [];
+          return old.map((c) =>
+            c.id === data.conversationId ? { ...c, unreadCount: 0 } : c
+          );
+        });
+      };
+
+      // Handle conversation summary update
+      const handleConversationUpdated = (data: { conversationId: string; lastMessage: string; lastMessageTime: string; lastMessageTimestamp?: number }) => {
+        optionsRef.current?.onConversationUpdated?.(data);
+
+        queryClient.setQueryData<Conversation[]>(['conversations', user?.email], (old) => {
+          if (!old) return [];
+          return old.map((c) =>
+            c.id === data.conversationId
+              ? {
+                  ...c,
+                  lastMessage: data.lastMessage,
+                  lastMessageTime: data.lastMessageTime,
+                  lastMessageTimestamp: data.lastMessageTimestamp || Date.now(),
+                }
+              : c
+          );
+        });
+      };
+
       socket.on(CHAT_EVENTS.MESSAGE_NEW, handleMessageNew);
+      socket.on(CHAT_EVENTS.MESSAGE_ACK, handleMessageAck);
+      socket.on(CHAT_EVENTS.MESSAGE_EDITED, handleMessageEdited);
+      socket.on(CHAT_EVENTS.MESSAGE_DELETED, handleMessageDeleted);
+      socket.on(CHAT_EVENTS.MESSAGE_READ_UPDATE, handleMessageReadUpdate);
+      socket.on(CHAT_EVENTS.CONVERSATION_UPDATED, handleConversationUpdated);
       socket.on(CHAT_EVENTS.TYPING_UPDATE, handleTypingUpdate);
       socket.on(CHAT_EVENTS.PRESENCE_UPDATE, handlePresenceUpdate);
 
@@ -159,6 +264,11 @@ export function useChatSocket(
           socket.emit(CHAT_EVENTS.CONVERSATION_LEAVE, { conversationId: activeConversationId });
         }
         socket.off(CHAT_EVENTS.MESSAGE_NEW, handleMessageNew);
+        socket.off(CHAT_EVENTS.MESSAGE_ACK, handleMessageAck);
+        socket.off(CHAT_EVENTS.MESSAGE_EDITED, handleMessageEdited);
+        socket.off(CHAT_EVENTS.MESSAGE_DELETED, handleMessageDeleted);
+        socket.off(CHAT_EVENTS.MESSAGE_READ_UPDATE, handleMessageReadUpdate);
+        socket.off(CHAT_EVENTS.CONVERSATION_UPDATED, handleConversationUpdated);
         socket.off(CHAT_EVENTS.TYPING_UPDATE, handleTypingUpdate);
         socket.off(CHAT_EVENTS.PRESENCE_UPDATE, handlePresenceUpdate);
       };

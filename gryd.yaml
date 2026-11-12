@@ -1,0 +1,16 @@
+name: orqland
+working_directory: .
+services:
+  backend:
+    directory: backend
+    command: pnpm run start:dev
+    port: 3002
+  frontend:
+    directory: frontend
+    command: pnpm run dev --port 3001
+    port: 3001
+    depends_on:
+      - backend
+settings:
+  health_check: true
+  restart_on_failure: false

@@ -13,7 +13,7 @@ import {
   ChevronRight,
   ChevronDown,
 } from 'lucide-react';
-import { BUSINESS_DIRECTORY, BusinessDirectoryItem } from '@/data/businesses';
+import { BUSINESS_DIRECTORY, BusinessDirectoryItem } from '@orqland/contracts';
 import { UserAvatar } from '@/components/ui/UserAvatar';
 
 interface StartChatModalProps {

@@ -23,10 +23,10 @@ Retrieve all active conversations for the authenticated user.
       {
         "id": "c0000000-0000-0000-0000-000000000001",
         "clientId": "u0000000-0000-0000-0000-000000000002",
-        "clientEmail": "ycssidharth@gmail.com",
+        "clientEmail": "client1@orqland.test",
         "clientName": "Sidharth Prabhu",
         "businessId": "a0000000-0000-0000-0000-000000000001",
-        "businessEmail": "mailtosidharth.me@gmail.com",
+        "businessEmail": "workspace.alpha@orqland.test",
         "status": "active",
         "lastMessage": "Project discussion",
         "unreadCount": 0
@@ -40,7 +40,7 @@ Initiate a conversation with a business.
 - **Body**:
   ```json
   {
-    "businessEmail": "mailtosidharth.me@gmail.com",
+    "businessEmail": "workspace.alpha@orqland.test",
     "businessName": "Sidharth Prabhu's Workspace",
     "initialMessage": "Hello, I would like to consult."
   }

@@ -74,21 +74,22 @@ export default function Home() {
               ? c.messages.map((m) => (m.id === msg.id || (m.idempotencyKey && m.idempotencyKey === msg.idempotencyKey) ? msg : m))
               : [...c.messages, msg];
             const isMe = msg.isMe;
+            const isCurrentlyViewing = c.id === activeConversationId;
             return {
               ...c,
               lastMessage: msg.content,
               lastMessageTime: msg.timestamp,
               lastMessageTimestamp: msg.createdAt,
               messages: newMessages,
-              unreadCount: (c.id === activeConversationId && !isPageInBackground()) || isMe ? 0 : (c.unreadCount || 0) + 1,
+              unreadCount: isCurrentlyViewing || isMe ? 0 : (c.unreadCount || 0) + 1,
             };
           }
           return c;
         })
       );
 
-      // Trigger UI top toast if not from self
-      if (!msg.isMe) {
+      // Trigger UI top toast ONLY if not from self AND not currently viewing that conversation
+      if (!msg.isMe && msg.conversationId !== activeConversationId) {
         setActiveToast({
           id: `${msg.conversationId}-${Date.now()}`,
           conversationId: msg.conversationId,
@@ -96,6 +97,75 @@ export default function Home() {
           count: 1,
         });
       }
+    },
+    onMessageAck: (ack) => {
+      setConversations((prev) =>
+        prev.map((c) => ({
+          ...c,
+          messages: c.messages.map((m) =>
+            (ack.clientGeneratedId && (m.id === ack.clientGeneratedId || m.idempotencyKey === ack.clientGeneratedId)) ||
+            m.id === ack.messageId
+              ? { ...m, id: ack.messageId, status: 'delivered' as const }
+              : m
+          ),
+        }))
+      );
+    },
+    onMessageEdited: (data) => {
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.id === data.conversationId
+            ? {
+                ...c,
+                messages: c.messages.map((m) =>
+                  m.id === data.messageId ? { ...m, content: data.content, isEdited: true, editedAt: Date.now() } : m
+                ),
+              }
+            : c
+        )
+      );
+    },
+    onMessageDeleted: (data) => {
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.id === data.conversationId
+            ? {
+                ...c,
+                messages: c.messages.map((m) =>
+                  m.id === data.messageId ? { ...m, content: 'This message was deleted.', deletedForEveryone: true } : m
+                ),
+              }
+            : c
+        )
+      );
+    },
+    onConversationUpdated: (data) => {
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.id === data.conversationId
+            ? {
+                ...c,
+                lastMessage: data.lastMessage,
+                lastMessageTime: data.lastMessageTime,
+                lastMessageTimestamp: Date.now(),
+              }
+            : c
+        )
+      );
+    },
+    onMessageReadUpdate: (data) => {
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.id === data.conversationId
+            ? {
+                ...c,
+                unreadCount: 0,
+                unreadByClient: 0,
+                unreadByBusiness: 0,
+              }
+            : c
+        )
+      );
     },
   });
   const conversationsQuery = useConversationsQuery();
@@ -273,9 +343,8 @@ export default function Home() {
       // zero out unreadCount on that active conversation so no badges or indications persist.
       // However, if the page is in the background (tab switched, minimized, or window unfocused),
       // keep the unread count intact so the background notification triggers properly!
-      const shouldZeroUnread = !isPageInBackground();
       const sanitizedList = updatedList.map((c) => {
-        if (c.id === activeConversationId && shouldZeroUnread) {
+        if (c.id === activeConversationId) {
           return {
             ...c,
             unreadCount: 0,
@@ -313,7 +382,7 @@ export default function Home() {
           const currentCount = c.unreadCount || 0;
 
           // Never notify the user if they are currently inside this active conversation window
-          if (c.id === activeConversationId && !isPageInBackground()) {
+          if (c.id === activeConversationId) {
             continue;
           }
 
@@ -403,11 +472,19 @@ export default function Home() {
   // Mark messages as read and send heartbeat when active conversation changes
   useEffect(() => {
     if (activeConversationId && effectiveViewerEmail) {
+      setActiveToast(null);
+      setClearedConversationIds((prev) => (prev.includes(activeConversationId) ? prev : [...prev, activeConversationId]));
+      // Immediately zero unread count locally for active conversation
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.id === activeConversationId
+            ? { ...c, unreadCount: 0, unreadByClient: 0, unreadByBusiness: 0 }
+            : c
+        )
+      );
       // Immediately send heartbeat so the other participant sees "Active" instantly
       chatService.sendHeartbeat(effectiveViewerEmail);
-      if (!isPageInBackground()) {
-        chatService.markAsRead(activeConversationId, effectiveViewerEmail);
-      }
+      chatService.markAsRead(activeConversationId, effectiveViewerEmail);
     }
   }, [activeConversationId, effectiveViewerEmail]);
 
@@ -418,6 +495,13 @@ export default function Home() {
       if (effectiveViewerEmail) {
         chatService.sendHeartbeat(effectiveViewerEmail);
         if (activeConversationId) {
+          setConversations((prev) =>
+            prev.map((c) =>
+              c.id === activeConversationId
+                ? { ...c, unreadCount: 0, unreadByClient: 0, unreadByBusiness: 0 }
+                : c
+            )
+          );
           chatService.markAsRead(activeConversationId, effectiveViewerEmail);
         }
       }
@@ -572,6 +656,7 @@ export default function Home() {
         content: text,
         attachment,
         attachments,
+        optimisticId: optimisticMessage.id,
       });
 
       // 2. Confirmed server update immediately replaces optimistic message
@@ -582,7 +667,9 @@ export default function Home() {
             return {
               ...c,
               messages: c.messages.map((m) =>
-                m.id === optimisticMessage.id
+                m.id === optimisticMessage.id ||
+                m.id === deliveredMsg.id ||
+                (m.status === 'sending' && m.content === text)
                   ? {
                       ...m,
                       id: deliveredMsg.id || m.id,
@@ -617,6 +704,8 @@ export default function Home() {
 
   const handleSelectConversation = (id: string) => {
     setActiveConversationId(id);
+    setActiveToast(null);
+    setClearedConversationIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
     // Optimistically clear unread state in local conversations list immediately (0ms)
     setConversations((prev) =>
       prev.map((c) =>
@@ -778,8 +867,8 @@ export default function Home() {
       (c) => (c.businessEmail || '').toLowerCase() === normTargetEmail
     );
 
-    if (existingConv && !isBusiness) {
-      if (existingConv.status === 'ended') {
+    if (existingConv) {
+      if (existingConv.status === 'ended' && !isBusiness) {
         // Pop up the confirmation modal asking whether to reopen the chat session and update the category
         setReopenPromptState({
           isOpen: true,
@@ -793,7 +882,81 @@ export default function Home() {
       // If already active, select it directly and send initial message if provided
       setActiveConversationId(existingConv.id);
       if (data.initialMessage && data.initialMessage.trim()) {
-        handleSendMessage(data.initialMessage.trim());
+        const text = data.initialMessage.trim();
+        const now = Date.now();
+        const timeString = new Date(now).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        const sender = isBusiness && activeViewMode !== 'client' ? currentBusinessUser : currentClientUser;
+        const senderEmail = clientEmail;
+
+        const optimisticMessage: ChatMessage = {
+          id: `msg-${now}-${Math.random().toString(36).slice(2, 6)}`,
+          conversationId: existingConv.id,
+          senderId: senderEmail,
+          senderEmail,
+          senderName: sender.name,
+          senderAvatar: sender.avatar,
+          content: text,
+          timestamp: timeString,
+          date: 'Today',
+          createdAt: now,
+          status: 'sending',
+        };
+
+        setConversations((prev) =>
+          prev.map((c) =>
+            c.id === existingConv.id
+              ? {
+                  ...c,
+                  lastMessage: text,
+                  lastMessageTime: timeString,
+                  lastMessageTimestamp: now,
+                  messages: [...c.messages, optimisticMessage],
+                }
+              : c
+          )
+        );
+
+        chatService
+          .sendMessage({
+            conversationId: existingConv.id,
+            senderEmail,
+            senderName: sender.name,
+            senderAvatar: sender.avatar,
+            content: text,
+            optimisticId: optimisticMessage.id,
+          })
+          .then((res) => {
+            const deliveredMsg = res?.message || { ...optimisticMessage, status: 'delivered' as const };
+            setConversations((prev) =>
+              prev.map((c) =>
+                c.id === existingConv.id
+                  ? {
+                      ...c,
+                      messages: c.messages.map((m) =>
+                        m.id === optimisticMessage.id || m.id === deliveredMsg.id || (m.status === 'sending' && m.content === text)
+                          ? { ...m, id: deliveredMsg.id || m.id, status: 'delivered' as const }
+                          : m
+                      ),
+                    }
+                  : c
+              )
+            );
+          })
+          .catch((err) => {
+            console.error('Failed to send initial message to existing conversation:', err);
+            setConversations((prev) =>
+              prev.map((c) =>
+                c.id === existingConv.id
+                  ? {
+                      ...c,
+                      messages: c.messages.map((m) =>
+                        m.id === optimisticMessage.id ? { ...m, status: 'failed' as const } : m
+                      ),
+                    }
+                  : c
+              )
+            );
+          });
       }
       return;
     }
@@ -807,6 +970,14 @@ export default function Home() {
       businessAvatar: data.businessAvatar || '',
       workspaceName: data.workspaceName || 'General Consultation',
       initialMessage: data.initialMessage,
+    });
+
+    setConversations((prev) => {
+      const exists = prev.some((c) => c.id === created.id);
+      if (exists) {
+        return prev.map((c) => (c.id === created.id ? created : c));
+      }
+      return [created, ...prev];
     });
 
     setActiveConversationId(created.id);

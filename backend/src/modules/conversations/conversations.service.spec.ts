@@ -12,9 +12,9 @@ describe('ConversationsService', () => {
   const clientUser: InternalUser = {
     id: 'u0000000-0000-0000-0000-000000000002',
     firebaseUid: 'firebase-client-123',
-    email: 'ycssidharth@gmail.com',
+    email: 'client1@orqland.test',
     name: 'Sidharth Prabhu',
-    handle: '@ycssidharth',
+    handle: '@client1',
     avatar: 'https://example.com/avatar.jpg',
     role: 'client',
   };
@@ -22,9 +22,9 @@ describe('ConversationsService', () => {
   const businessUser: InternalUser = {
     id: 'a0000000-0000-0000-0000-000000000001',
     firebaseUid: 'firebase-biz-123',
-    email: 'mailtosidharth.me@gmail.com',
+    email: 'workspace.alpha@orqland.test',
     name: "Sidharth Prabhu's Workspace",
-    handle: '@mailtosidharth.me',
+    handle: '@workspace.alpha',
     avatar: 'https://example.com/avatar-biz.jpg',
     role: 'business',
   };
@@ -65,7 +65,7 @@ describe('ConversationsService', () => {
 
   it('should initiate a new conversation or return existing', async () => {
     const conv = await conversationsService.initiateConversation(clientUser, {
-      businessEmail: 'mailtosidharth.me@gmail.com',
+      businessEmail: 'workspace.alpha@orqland.test',
       businessName: "Sidharth Prabhu's Workspace",
       initialMessage: 'Initiating project consultation',
     });

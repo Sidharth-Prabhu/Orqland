@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 const NEST_API_BASE =
   process.env.NEST_API_URL ||
   process.env.INTERNAL_API_URL ||
-  'http://localhost:3001/api/v1';
+  'http://localhost:3002/api/v1';
 
 export async function proxyToNest(
   request: NextRequest,

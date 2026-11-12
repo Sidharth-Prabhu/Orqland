@@ -76,7 +76,12 @@ export class FirebaseAdminService implements OnModuleInit {
     }
 
     if (!this.isConfigured || !this.firebaseApp) {
-      // In development when service account is not yet provided, inspect JWT claims safely
+      if (process.env.NODE_ENV === 'production') {
+        throw new UnauthorizedException(
+          'Firebase Admin is not initialized. Unsigned tokens are strictly rejected in production.'
+        );
+      }
+      // Isolated to development/test only when service account credentials are not provided
       return this.decodeDevToken(cleanToken);
     }
 
@@ -95,6 +100,9 @@ export class FirebaseAdminService implements OnModuleInit {
   }
 
   private decodeDevToken(token: string): DecodedAuthToken {
+    if (process.env.NODE_ENV === 'production') {
+      throw new UnauthorizedException('Unsigned token decoding is strictly forbidden in production.');
+    }
     try {
       const parts = token.split('.');
       if (parts.length === 3) {

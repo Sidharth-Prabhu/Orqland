@@ -104,7 +104,7 @@ OpenPurpl/
 │   │   ├── components/    # ChatConversation, DirectMessagesList, Attachment previews, Modals
 │   │   ├── features/chat/ # TanStack Query v5 Hooks & Realtime Socket synchronization
 │   │   ├── stores/        # Zustand v5 UI & Media State Store (Zero duplicated server state)
-│   │   └── lib/           # Socket.IO client manager, BFF proxy, encryption helpers
+│   │   └── lib/           # Socket.IO client manager, BFF proxy, DLP & security helpers
 │   ├── public/            # Static assets & Service Worker for notifications
 │   └── Dockerfile
 │
@@ -160,7 +160,7 @@ NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=1029384756
 NEXT_PUBLIC_FIREBASE_APP_ID=1:1029384756:web:abcdef123456
 
 # --- Business Account Identification ---
-BUSINESS_EMAIL=mailtosidharth.me@gmail.com
+BUSINESS_EMAIL=workspace.alpha@orqland.test
 ```
 
 ---
@@ -175,7 +175,7 @@ BUSINESS_EMAIL=mailtosidharth.me@gmail.com
 | `POST` | `/api/chat/read` | Bearer Token | Resets conversation unread counters and flags messages `read`. |
 | `POST` | `/api/chat/reopen` | Bearer Token | Reactivates a closed (`ended`) conversation session. |
 | `POST` | `/api/chat/end` | Bearer Token | Gracefully concludes a conversation session. |
-| `POST` | `/api/chat/edit-message` | Sender (&le; 15 min) | Updates content of a sent message within the grace period. |
+| `POST` | `/api/chat/edit-message` | Sender (&le; 10 min) | Updates content of a sent message within the grace period. |
 | `POST` | `/api/chat/delete-message` | Sender (&le; 15 min) | Soft-deletes a message for the user or everyone. |
 | `GET` | `/api/health` | Public | Returns server health, CPU load, memory usage, and uptime. |
 
@@ -212,7 +212,8 @@ pnpm db:seed       # Seed default user and conversation data
 
 ### 4. Automated Testing
 ```bash
-pnpm test          # Runs 18 unit & integration test suites
+pnpm --filter @orqland/api test       # Runs unit test suites (19/19 passing)
+pnpm --filter @orqland/api test:e2e   # Runs end-to-end integration test suite (9/9 passing)
 ```
 
 ### 5. Production Build & Execution

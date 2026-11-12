@@ -1,0 +1,13 @@
+{
+  "moduleFileExtensions": ["js", "json", "ts"],
+  "rootDir": ".",
+  "testRegex": ".e2e-spec.ts$",
+  "transform": {
+    "^.+\\.(t|j)sx?$": "ts-jest"
+  },
+  "moduleNameMapper": {
+    "^@nestjs/graphql$": "<rootDir>/graphql.mock.js",
+    "^@nestjs/apollo$": "<rootDir>/apollo.mock.js"
+  },
+  "testEnvironment": "node"
+}

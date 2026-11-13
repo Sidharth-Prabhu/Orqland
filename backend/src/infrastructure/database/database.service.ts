@@ -1,9 +1,12 @@
 import { Injectable, OnModuleInit, OnModuleDestroy, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { drizzle, NodePgDatabase } from 'drizzle-orm/node-postgres';
+import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { Pool } from 'pg';
 import * as schema from './schema';
 import { sql } from 'drizzle-orm';
+import * as fs from 'fs';
+import * as path from 'path';
 
 @Injectable()
 export class DatabaseService implements OnModuleInit, OnModuleDestroy {
@@ -58,130 +61,127 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  private resolveMigrationsFolder(): string | null {
+    const candidates = [
+      path.resolve(__dirname, '../../../drizzle'),
+      path.resolve(__dirname, '../../../../drizzle'),
+      path.resolve(process.cwd(), 'drizzle'),
+      path.resolve(process.cwd(), 'backend/drizzle'),
+    ];
+    for (const candidate of candidates) {
+      if (fs.existsSync(path.join(candidate, 'meta', '_journal.json'))) {
+        return candidate;
+      }
+    }
+    return null;
+  }
+
   private async initializeSchema() {
     if (!this.db || !this.isConnected) return;
     try {
-      // Create tables if they do not exist
+      const migrationsFolder = this.resolveMigrationsFolder();
+      if (migrationsFolder) {
+        await migrate(this.db, { migrationsFolder });
+        this.logger.log(`Drizzle migrations applied from ${migrationsFolder}.`);
+        return;
+      }
+
+      // Fallback DDL matching schema/host-refs.schema.ts and schema/chat.schema.ts
       await this.db.execute(sql`
-        CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-
-        CREATE TABLE IF NOT EXISTS users (
+        CREATE TABLE IF NOT EXISTS orq_users (
           id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-          firebase_uid VARCHAR(128) UNIQUE NOT NULL,
-          email VARCHAR(255) UNIQUE NOT NULL,
-          name VARCHAR(255) NOT NULL,
-          handle VARCHAR(100),
-          avatar_url TEXT,
-          role VARCHAR(20) NOT NULL DEFAULT 'client',
-          location VARCHAR(255),
-          wsid VARCHAR(100),
-          business_status VARCHAR(20) DEFAULT 'Open',
-          is_online BOOLEAN DEFAULT false,
-          last_seen_at BIGINT,
-          created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-          updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+          display_name VARCHAR(100),
+          email VARCHAR(255) UNIQUE,
+          avatar VARCHAR(500),
+          is_active BOOLEAN NOT NULL DEFAULT true,
+          created_at TIMESTAMP NOT NULL DEFAULT now()
         );
 
-        CREATE TABLE IF NOT EXISTS conversations (
+        CREATE TABLE IF NOT EXISTS orqspaces (
           id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-          client_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-          business_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          orqspace_id VARCHAR(14) UNIQUE NOT NULL,
+          name VARCHAR(150) NOT NULL,
+          logo_url VARCHAR(500),
+          owner_id UUID NOT NULL REFERENCES orq_users(id) ON DELETE CASCADE,
+          is_active BOOLEAN NOT NULL DEFAULT true,
+          created_at TIMESTAMP NOT NULL DEFAULT now()
+        );
+
+        CREATE TABLE IF NOT EXISTS chat_conversations (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          client_user_id UUID NOT NULL REFERENCES orq_users(id) ON DELETE CASCADE,
+          orqspace_id UUID NOT NULL REFERENCES orqspaces(id) ON DELETE CASCADE,
           status VARCHAR(20) NOT NULL DEFAULT 'active',
-          ended_at BIGINT,
-          ended_by UUID REFERENCES users(id),
-          deleted_by_business_at BIGINT,
-          deleted_for_client_at BIGINT,
-          workspace_name VARCHAR(255) DEFAULT 'Orqspace',
-          workspace_type VARCHAR(100) DEFAULT 'Orqspace Info',
-          workspace_description TEXT,
-          booking_service_name VARCHAR(255),
-          booking_status VARCHAR(50),
-          last_message_text TEXT DEFAULT '',
-          last_message_time VARCHAR(50) DEFAULT '',
-          last_message_timestamp BIGINT DEFAULT 0,
+          ended_at TIMESTAMP,
+          ended_by_user_id UUID REFERENCES orq_users(id) ON DELETE SET NULL,
+          client_cleared_before TIMESTAMP,
+          workspace_cleared_before TIMESTAMP,
+          last_message_preview TEXT,
+          last_message_at TIMESTAMP,
           unread_by_client INTEGER NOT NULL DEFAULT 0,
-          unread_by_business INTEGER NOT NULL DEFAULT 0,
-          created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-          updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+          unread_by_workspace INTEGER NOT NULL DEFAULT 0,
+          created_at TIMESTAMP NOT NULL DEFAULT now(),
+          updated_at TIMESTAMP NOT NULL DEFAULT now()
         );
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_chat_conv_client_orqspace ON chat_conversations(client_user_id, orqspace_id);
+        CREATE INDEX IF NOT EXISTS idx_chat_conv_orqspace_updated ON chat_conversations(orqspace_id, last_message_at);
+        CREATE INDEX IF NOT EXISTS idx_chat_conv_client_updated ON chat_conversations(client_user_id, last_message_at);
 
-        CREATE TABLE IF NOT EXISTS conversation_participants (
+        CREATE TABLE IF NOT EXISTS chat_messages (
           id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-          conversation_id UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-          user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-          role VARCHAR(20) NOT NULL,
-          joined_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-          left_at TIMESTAMP WITH TIME ZONE,
-          last_read_message_id UUID,
-          last_read_at BIGINT,
-          UNIQUE (conversation_id, user_id)
-        );
-
-        CREATE TABLE IF NOT EXISTS messages (
-          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-          conversation_id UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-          sender_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-          content TEXT DEFAULT '',
-          type VARCHAR(20) DEFAULT 'text',
-          idempotency_key VARCHAR(128),
-          status VARCHAR(20) DEFAULT 'delivered',
-          sequence_number BIGSERIAL,
-          created_at BIGINT NOT NULL,
-          timestamp_display VARCHAR(50) NOT NULL,
-          date_display VARCHAR(50) DEFAULT 'Today',
+          conversation_id UUID NOT NULL REFERENCES chat_conversations(id) ON DELETE CASCADE,
+          sender_user_id UUID NOT NULL REFERENCES orq_users(id) ON DELETE CASCADE,
+          sender_side VARCHAR(20) NOT NULL,
+          content TEXT NOT NULL DEFAULT '',
+          message_type VARCHAR(20) NOT NULL DEFAULT 'text',
+          idempotency_key VARCHAR(128) NOT NULL,
+          status VARCHAR(20) NOT NULL DEFAULT 'delivered',
           is_edited BOOLEAN NOT NULL DEFAULT false,
-          edited_at BIGINT,
-          deleted_by_client BOOLEAN NOT NULL DEFAULT false,
-          deleted_by_business BOOLEAN NOT NULL DEFAULT false,
+          edited_at TIMESTAMP,
           deleted_for_everyone BOOLEAN NOT NULL DEFAULT false,
-          UNIQUE (conversation_id, idempotency_key)
+          deleted_at TIMESTAMP,
+          created_at TIMESTAMP NOT NULL DEFAULT now()
         );
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_chat_msg_idempotency ON chat_messages(conversation_id, idempotency_key);
+        CREATE INDEX IF NOT EXISTS idx_chat_msg_conv_created ON chat_messages(conversation_id, created_at);
 
-        CREATE TABLE IF NOT EXISTS message_attachments (
+        CREATE TABLE IF NOT EXISTS chat_message_attachments (
           id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-          message_id UUID NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
-          type VARCHAR(20) NOT NULL,
-          name VARCHAR(255) NOT NULL,
-          object_key TEXT NOT NULL,
+          message_id UUID NOT NULL REFERENCES chat_messages(id) ON DELETE CASCADE,
+          attachment_type VARCHAR(20) NOT NULL,
+          file_name VARCHAR(255) NOT NULL,
+          mime_type VARCHAR(100),
+          size_bytes INTEGER,
+          storage_key TEXT NOT NULL,
           url TEXT NOT NULL,
           thumbnail_url TEXT,
-          mime_type VARCHAR(100),
-          size INTEGER,
-          upload_status VARCHAR(20) DEFAULT 'completed',
           location_data JSONB,
-          expires_at BIGINT NOT NULL,
+          expires_at TIMESTAMP NOT NULL,
           is_expired BOOLEAN NOT NULL DEFAULT false,
-          created_at BIGINT NOT NULL
+          expired_at TIMESTAMP,
+          created_at TIMESTAMP NOT NULL DEFAULT now()
         );
+        CREATE INDEX IF NOT EXISTS idx_chat_att_message ON chat_message_attachments(message_id);
+        CREATE INDEX IF NOT EXISTS idx_chat_att_purge ON chat_message_attachments(is_expired, expires_at);
 
-        CREATE TABLE IF NOT EXISTS message_receipts (
+        CREATE TABLE IF NOT EXISTS chat_message_receipts (
           id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-          message_id UUID NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
-          user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-          status VARCHAR(20) NOT NULL DEFAULT 'delivered',
-          delivered_at BIGINT,
-          read_at BIGINT,
-          UNIQUE (message_id, user_id)
+          conversation_id UUID NOT NULL REFERENCES chat_conversations(id) ON DELETE CASCADE,
+          user_id UUID NOT NULL REFERENCES orq_users(id) ON DELETE CASCADE,
+          last_read_message_id UUID REFERENCES chat_messages(id) ON DELETE SET NULL,
+          last_read_at TIMESTAMP NOT NULL DEFAULT now()
         );
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_chat_receipt_conv_user ON chat_message_receipts(conversation_id, user_id);
 
-        CREATE TABLE IF NOT EXISTS user_push_tokens (
+        CREATE TABLE IF NOT EXISTS chat_push_tokens (
           id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-          user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-          fcm_token TEXT UNIQUE NOT NULL,
-          device_type VARCHAR(50) DEFAULT 'web',
-          updated_at BIGINT NOT NULL,
-          created_at BIGINT NOT NULL
+          user_id UUID NOT NULL REFERENCES orq_users(id) ON DELETE CASCADE,
+          token TEXT UNIQUE NOT NULL,
+          platform VARCHAR(20) NOT NULL DEFAULT 'web',
+          last_used_at TIMESTAMP NOT NULL DEFAULT now(),
+          created_at TIMESTAMP NOT NULL DEFAULT now()
         );
-
-        CREATE TABLE IF NOT EXISTS outbox_events (
-          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-          event_type VARCHAR(100) NOT NULL,
-          payload JSONB NOT NULL,
-          status VARCHAR(20) NOT NULL DEFAULT 'pending',
-          retry_count INTEGER NOT NULL DEFAULT 0,
-          created_at BIGINT NOT NULL,
-          published_at BIGINT
-        );
+        CREATE INDEX IF NOT EXISTS idx_chat_push_user ON chat_push_tokens(user_id);
       `);
       this.logger.log('PostgreSQL schema verified and up-to-date.');
     } catch (err) {

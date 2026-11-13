@@ -31,7 +31,7 @@ import {
   ChatErrorCode,
   detectSensitiveContent,
 } from '@orqland/contracts';
-import { eq, and, desc, sql, lt, gt } from 'drizzle-orm';
+import { eq, and, desc, sql, lt, gt, or } from 'drizzle-orm';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -41,6 +41,12 @@ const EDIT_WINDOW_MS = 10 * 60 * 1000;
 const DELETE_WINDOW_MS = 15 * 60 * 1000;
 // 48-hour attachment retention
 const ATTACHMENT_RETENTION_MS = 48 * 60 * 60 * 1000;
+
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function isUuid(val: string | null | undefined): val is string {
+  return typeof val === 'string' && UUID_REGEX.test(val);
+}
 
 function resolveDataDir(): string {
   let curr = process.cwd();
@@ -189,7 +195,8 @@ export class MessagesService {
     conversationId: string,
     user: InternalUser,
     limit: number = 50,
-    beforeTimestamp?: number
+    beforeTimestamp?: number,
+    cursor?: string
   ): Promise<PaginatedMessagesResponseDto> {
     const conv = await this.conversationsService.getConversation(conversationId, user);
     const isClient = user.id === conv.clientId;
@@ -198,7 +205,32 @@ export class MessagesService {
     if (this.dbService.isDbConnected()) {
       try {
         const db = this.dbService.getDb();
-        const conditions = [eq(chatMessages.conversationId, conversationId)];
+        const conditions = [
+          eq(chatMessages.conversationId, conversationId),
+          eq(chatMessages.deletedForEveryone, false),
+        ];
+
+        if (cursor) {
+          const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+          if (uuidRegex.test(cursor)) {
+            const cursorRows = await db
+              .select({ createdAt: chatMessages.createdAt, id: chatMessages.id })
+              .from(chatMessages)
+              .where(and(eq(chatMessages.id, cursor), eq(chatMessages.conversationId, conversationId)))
+              .limit(1);
+
+            if (cursorRows.length > 0) {
+              const cRow = cursorRows[0];
+              const cursorFilter = or(
+                lt(chatMessages.createdAt, cRow.createdAt),
+                and(eq(chatMessages.createdAt, cRow.createdAt), lt(chatMessages.id, cRow.id))
+              );
+              if (cursorFilter) {
+                conditions.push(cursorFilter);
+              }
+            }
+          }
+        }
 
         if (beforeTimestamp) {
           conditions.push(lt(chatMessages.createdAt, new Date(beforeTimestamp)));
@@ -216,7 +248,7 @@ export class MessagesService {
           .from(chatMessages)
           .leftJoin(orqUsers, eq(chatMessages.senderUserId, orqUsers.id))
           .where(and(...conditions))
-          .orderBy(desc(chatMessages.createdAt))
+          .orderBy(desc(chatMessages.createdAt), desc(chatMessages.id))
           .limit(limit + 1);
 
         const hasMore = rawMessages.length > limit;
@@ -297,14 +329,22 @@ export class MessagesService {
     }
 
     // In-memory fallback
-    let list = this.inMemoryMessages.filter((m) => m.conversationId === conversationId);
+    let list = this.inMemoryMessages.filter(
+      (m) => m.conversationId === conversationId && !m.deletedForEveryone
+    );
     if (clearedBefore) {
       list = list.filter((m) => m.createdAt > clearedBefore);
     }
     if (beforeTimestamp) {
       list = list.filter((m) => m.createdAt < beforeTimestamp);
     }
-    list.sort((a, b) => a.createdAt - b.createdAt);
+    list.sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
+    if (cursor) {
+      const cursorIndex = list.findIndex((m) => m.id === cursor);
+      if (cursorIndex >= 0) {
+        list = list.slice(0, cursorIndex);
+      }
+    }
 
     const hasMore = list.length > limit;
     const items = (hasMore ? list.slice(list.length - limit) : list).map((m) => ({
@@ -379,12 +419,14 @@ export class MessagesService {
           throw new BadRequestException('Inline base64 file payloads are prohibited. Upload via storage signed URL.');
         }
 
+        const validAttachmentId = isUuid(att.id) ? att.id : crypto.randomUUID();
+
         incomingAttachments.push({
-          id: att.id || crypto.randomUUID(),
+          id: validAttachmentId,
           type: att.type,
           name: att.name,
           url: att.url,
-          objectKey: att.objectKey || `chat/${dto.conversationId}/${att.id || crypto.randomUUID()}-${att.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`,
+          objectKey: att.objectKey || `chat/${dto.conversationId}/${validAttachmentId}-${att.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`,
           thumbnailUrl: att.thumbnailUrl,
           size: att.size,
           mimeType: att.mimeType,
@@ -398,12 +440,14 @@ export class MessagesService {
         throw new BadRequestException('Inline base64 file payloads are prohibited. Upload via storage signed URL.');
       }
 
+      const validAttachmentId = isUuid(dto.attachment.id) ? dto.attachment.id : crypto.randomUUID();
+
       incomingAttachments.push({
-        id: dto.attachment.id || crypto.randomUUID(),
+        id: validAttachmentId,
         type: dto.attachment.type,
         name: dto.attachment.name,
         url: dto.attachment.url,
-        objectKey: dto.attachment.objectKey || `chat/${dto.conversationId}/${dto.attachment.id || crypto.randomUUID()}-${dto.attachment.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`,
+        objectKey: dto.attachment.objectKey || `chat/${dto.conversationId}/${validAttachmentId}-${dto.attachment.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`,
         thumbnailUrl: dto.attachment.thumbnailUrl,
         size: dto.attachment.size,
         mimeType: dto.attachment.mimeType,
@@ -481,35 +525,39 @@ export class MessagesService {
           .where(eq(chatConversations.id, dto.conversationId));
       } catch (err: any) {
         // If PostgreSQL unique constraint on idempotency fails, return existing message
-        if (err?.code === '23505' && dto.idempotencyKey) {
-          const db = this.dbService.getDb();
-          const existing = await db
-            .select()
-            .from(chatMessages)
-            .where(
-              and(
-                eq(chatMessages.conversationId, dto.conversationId),
-                eq(chatMessages.idempotencyKey, dto.idempotencyKey)
+        if (dto.idempotencyKey) {
+          try {
+            const db = this.dbService.getDb();
+            const existing = await db
+              .select()
+              .from(chatMessages)
+              .where(
+                and(
+                  eq(chatMessages.conversationId, dto.conversationId),
+                  eq(chatMessages.idempotencyKey, dto.idempotencyKey)
+                )
               )
-            )
-            .limit(1);
+              .limit(1);
 
-          if (existing.length > 0) {
-            const em = existing[0];
-            return {
-              id: em.id,
-              conversationId: em.conversationId,
-              senderId: em.senderUserId,
-              senderName: user.name,
-              senderAvatar: user.avatar,
-              content: em.content,
-              timestamp: timeString,
-              date: 'Today',
-              createdAt: em.createdAt.getTime(),
-              isMe: true,
-              status: em.status as any,
-              idempotencyKey: em.idempotencyKey,
-            };
+            if (existing.length > 0) {
+              const em = existing[0];
+              return {
+                id: em.id,
+                conversationId: em.conversationId,
+                senderId: em.senderUserId,
+                senderName: user.name,
+                senderAvatar: user.avatar,
+                content: em.content,
+                timestamp: timeString,
+                date: 'Today',
+                createdAt: em.createdAt.getTime(),
+                isMe: true,
+                status: em.status as any,
+                idempotencyKey: em.idempotencyKey,
+              };
+            }
+          } catch (lookupErr) {
+            this.logger.warn('Failed to lookup idempotent message after DB error:', lookupErr);
           }
         }
 
@@ -546,10 +594,14 @@ export class MessagesService {
     if (this.dbService.isDbConnected()) {
       try {
         const db = this.dbService.getDb();
+        const idCondition = isUuid(dto.messageId)
+          ? eq(chatMessages.id, dto.messageId)
+          : eq(chatMessages.idempotencyKey, dto.messageId);
+
         const existing = await db
           .select()
           .from(chatMessages)
-          .where(and(eq(chatMessages.id, dto.messageId), eq(chatMessages.conversationId, dto.conversationId)))
+          .where(and(idCondition, eq(chatMessages.conversationId, dto.conversationId)))
           .limit(1);
 
         if (existing.length === 0) {
@@ -581,7 +633,7 @@ export class MessagesService {
             isEdited: true,
             editedAt: nowDate,
           })
-          .where(eq(chatMessages.id, dto.messageId));
+          .where(eq(chatMessages.id, msg.id));
 
         return {
           id: msg.id,
@@ -596,6 +648,7 @@ export class MessagesService {
           isMe: true,
           isEdited: true,
           editedAt: now,
+          idempotencyKey: msg.idempotencyKey,
         };
       } catch (err) {
         if (err instanceof BadRequestException || err instanceof ForbiddenException || err instanceof NotFoundException) {
@@ -607,7 +660,7 @@ export class MessagesService {
     }
 
     // In-memory fallback
-    const msg = this.inMemoryMessages.find((m) => m.id === dto.messageId);
+    const msg = this.inMemoryMessages.find((m) => m.id === dto.messageId || m.idempotencyKey === dto.messageId);
     if (!msg) {
       throw new NotFoundException('Message not found.');
     }
@@ -642,10 +695,14 @@ export class MessagesService {
     if (this.dbService.isDbConnected()) {
       try {
         const db = this.dbService.getDb();
+        const idCondition = isUuid(dto.messageId)
+          ? eq(chatMessages.id, dto.messageId)
+          : eq(chatMessages.idempotencyKey, dto.messageId);
+
         const existing = await db
           .select()
           .from(chatMessages)
-          .where(and(eq(chatMessages.id, dto.messageId), eq(chatMessages.conversationId, dto.conversationId)))
+          .where(and(idCondition, eq(chatMessages.conversationId, dto.conversationId)))
           .limit(1);
 
         if (existing.length === 0) {
@@ -673,7 +730,7 @@ export class MessagesService {
             deletedForEveryone: true,
             deletedAt: nowDate,
           })
-          .where(eq(chatMessages.id, dto.messageId));
+          .where(eq(chatMessages.id, msg.id));
 
         return {
           id: msg.id,
@@ -687,6 +744,7 @@ export class MessagesService {
           createdAt: msg.createdAt.getTime(),
           isMe: msg.senderUserId === user.id,
           deletedForEveryone: true,
+          idempotencyKey: msg.idempotencyKey,
         };
       } catch (err) {
         if (err instanceof BadRequestException || err instanceof ForbiddenException || err instanceof NotFoundException) {
@@ -698,7 +756,7 @@ export class MessagesService {
     }
 
     // In-memory fallback
-    const msg = this.inMemoryMessages.find((m) => m.id === dto.messageId);
+    const msg = this.inMemoryMessages.find((m) => m.id === dto.messageId || m.idempotencyKey === dto.messageId);
     if (!msg) {
       throw new NotFoundException('Message not found.');
     }

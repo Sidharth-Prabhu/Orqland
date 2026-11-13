@@ -44,15 +44,16 @@ export class AttachmentsService {
       }
     }
 
+    const attachmentId = crypto.randomUUID();
+
     // 2. Delegate to ChatStorageProvider (enforces size <= 5MB, MIME, dangerous extension checks)
     const policy = await this.chatStorageProvider.createUploadPolicy({
       conversationId,
       fileName,
       mimeType,
       sizeBytes: size,
+      attachmentId,
     });
-
-    const attachmentId = crypto.randomUUID();
 
     return {
       uploadUrl: policy.uploadUrl,

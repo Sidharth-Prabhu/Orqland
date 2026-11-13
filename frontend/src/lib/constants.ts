@@ -1,4 +1,4 @@
-export const DEFAULT_BUSINESS_EMAIL = 'mailtosidharth.me@gmail.com';
+export const DEFAULT_BUSINESS_EMAIL = '';
 export const BUSINESS_EMAIL =
   process.env.NEXT_PUBLIC_BUSINESS_EMAIL || DEFAULT_BUSINESS_EMAIL;
 

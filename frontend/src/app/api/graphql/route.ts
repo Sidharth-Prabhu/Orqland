@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { fetchUpstreamWithRetry } from '@/lib/api/bffProxy';
 
 const NEST_BASE_URL =
   process.env.NEST_BASE_URL ||
@@ -12,7 +13,6 @@ export async function POST(req: NextRequest) {
     }
 
     const authHeader = req.headers.get('authorization') || req.headers.get('x-user-token');
-    const userEmailHeader = req.headers.get('x-user-email');
 
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
@@ -22,11 +22,8 @@ export async function POST(req: NextRequest) {
     if (authHeader) {
       headers['authorization'] = authHeader;
     }
-    if (userEmailHeader) {
-      headers['x-user-email'] = userEmailHeader;
-    }
 
-    const upstream = await fetch(`${NEST_BASE_URL}/graphql`, {
+    const upstream = await fetchUpstreamWithRetry(`${NEST_BASE_URL}/graphql`, {
       method: 'POST',
       headers,
       body: JSON.stringify(body),
@@ -36,8 +33,9 @@ export async function POST(req: NextRequest) {
     const data = await upstream.json().catch(() => ({ errors: [{ message: 'Invalid response from upstream GraphQL server' }] }));
     return NextResponse.json(data, { status: upstream.status });
   } catch (error: any) {
+    const detail = error?.cause?.code ? `${error.message} (${error.cause.code})` : error?.message;
     return NextResponse.json(
-      { errors: [{ message: error?.message || 'Internal GraphQL BFF proxy failure' }] },
+      { errors: [{ message: detail || 'Internal GraphQL BFF proxy failure' }] },
       { status: 502 }
     );
   }

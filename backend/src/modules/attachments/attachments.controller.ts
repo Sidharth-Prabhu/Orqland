@@ -70,7 +70,30 @@ export class AttachmentsController {
     @Req() req: Request,
     @Res() res: Response
   ) {
-    // Simulated upload endpoint acknowledges receipt without hoarding multi-megabyte buffers
+    const mimeType = ((req.headers['content-type'] as string) || 'application/octet-stream')
+      .split(';')[0]
+      .trim()
+      .toLowerCase();
+
+    let buffer: Buffer = Buffer.isBuffer(req.body)
+      ? req.body
+      : Buffer.isBuffer((req as any).rawBody)
+      ? (req as any).rawBody
+      : Buffer.alloc(0);
+
+    if (buffer.length === 0 && typeof (req as any).on === 'function') {
+      buffer = await new Promise<Buffer>((resolve) => {
+        const chunks: Buffer[] = [];
+        req.on('data', (c: Buffer) => chunks.push(c));
+        req.on('end', () => resolve(Buffer.concat(chunks)));
+        req.on('error', () => resolve(Buffer.alloc(0)));
+      });
+    }
+
+    if (buffer.length > 0) {
+      await this.redisService.setAttachmentBuffer(key, buffer, mimeType, 172800);
+    }
+
     return res.status(200).json({
       success: true,
       key,

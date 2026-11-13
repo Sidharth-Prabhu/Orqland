@@ -8,13 +8,17 @@ import {
   SENSITIVE_INFO_PATTERNS,
 } from './constants';
 import { AttachmentType } from '@/types/chat';
-import { INITIAL_BUSINESSES } from '@orqland/contracts';
 
-export function isBusinessUser(email?: string | null): boolean {
+export function isBusinessUser(
+  email?: string | null,
+  userRole?: string | null,
+  knownBusinesses?: Array<{ email?: string | null }>
+): boolean {
+  if (userRole === 'business') return true;
   if (!email) return false;
   const clean = email.trim().toLowerCase();
 
-  // 1. Check environment configured business emails
+  // 1. Check environment configured business emails (if set)
   const envEmails = (process.env.NEXT_PUBLIC_BUSINESS_EMAILS || process.env.NEXT_PUBLIC_BUSINESS_EMAIL || '')
     .toLowerCase()
     .split(',')
@@ -22,15 +26,17 @@ export function isBusinessUser(email?: string | null): boolean {
     .filter(Boolean);
 
   if (envEmails.includes(clean)) return true;
-  if (clean === 'mailtosidharth.me@gmail.com') return true;
 
-  // 2. Check default fallback
-  if (clean === BUSINESS_EMAIL.toLowerCase() || clean === DEFAULT_BUSINESS_EMAIL.toLowerCase()) {
+  if (BUSINESS_EMAIL && clean === BUSINESS_EMAIL.toLowerCase()) {
     return true;
   }
 
-  // 3. Check known business directory list
-  return INITIAL_BUSINESSES.some((b) => b.email.toLowerCase() === clean);
+  // 2. Check dynamically loaded business directory list
+  if (knownBusinesses?.some((b) => (b.email || '').toLowerCase() === clean)) {
+    return true;
+  }
+
+  return false;
 }
 
 export function validateAttachmentFile(file: File): {

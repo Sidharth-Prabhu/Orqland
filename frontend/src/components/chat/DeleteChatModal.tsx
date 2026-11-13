@@ -42,28 +42,25 @@ export const DeleteChatModal: React.FC<DeleteChatModalProps> = ({
             <h3 className="text-base font-bold text-gray-900">
               Clear Chat History?
             </h3>
-            <span className="text-[11px] font-semibold text-amber-800 bg-amber-100/70 px-2.5 py-0.5 rounded-full inline-block mt-0.5">
-              Affects Your Side Only
+            <span className="text-[11px] font-semibold text-rose-800 bg-rose-100/70 px-2.5 py-0.5 rounded-full inline-block mt-0.5">
+              Reflected On Both Sides
             </span>
           </div>
         </div>
 
-        <div className="space-y-3 mb-6 text-xs text-gray-600 leading-relaxed bg-amber-50/50 p-4 rounded-2xl border border-amber-200/60">
-          <p className="font-bold text-amber-950">
+        <div className="space-y-3 mb-6 text-xs text-gray-600 leading-relaxed bg-rose-50/50 p-4 rounded-2xl border border-rose-200/60">
+          <p className="font-bold text-rose-950">
             Please note how clearing chat history works with {clientName}:
           </p>
           <ul className="space-y-2 list-disc list-inside text-gray-700">
             <li>
-              <strong className="text-gray-900">Clears the conversation history</strong> from your side only.
+              <strong className="text-gray-900">Clears conversation messages</strong> for both you and {clientName}.
             </li>
             <li>
-              The conversation and all existing messages <strong className="text-gray-900">remain visible to {clientName}</strong>.
+              The conversation thread and connection between you and {clientName} <strong className="text-gray-900">remain active</strong>.
             </li>
             <li>
-              The communication connection between you and {clientName} <strong className="text-gray-900">remains active</strong>.
-            </li>
-            <li>
-              You can <strong className="text-gray-900">start messaging again immediately</strong> without creating a new connection.
+              You can <strong className="text-gray-900">start messaging again immediately</strong> at any time.
             </li>
           </ul>
         </div>
@@ -81,10 +78,10 @@ export const DeleteChatModal: React.FC<DeleteChatModalProps> = ({
             type="button"
             onClick={onConfirm}
             disabled={isSubmitting}
-            className="flex items-center gap-2 px-5 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold shadow-sm transition-all cursor-pointer disabled:opacity-50"
+            className="flex items-center gap-2 px-5 py-2.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold shadow-sm transition-all cursor-pointer disabled:opacity-50"
           >
             <Trash2 size={14} />
-            <span>{isSubmitting ? 'Clearing...' : 'Clear for Me'}</span>
+            <span>{isSubmitting ? 'Clearing...' : 'Clear Chat'}</span>
           </button>
         </div>
       </div>

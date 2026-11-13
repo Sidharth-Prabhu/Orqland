@@ -1,16 +1,32 @@
 import { Conversation, ChatMessage, ChatAttachment } from '@/types/chat';
 import { auth } from './firebase';
 import { isAttachmentExpired } from './security';
+import { generateUuid } from './uuid';
+import { dedupeMessages, upsertMessage } from './messageState';
 import { deleteFileFromFirebaseStorage } from './firebaseStorage';
 import { getChatSocket } from './socket/client';
 import { CHAT_EVENTS } from '@orqland/contracts';
 import { checkMessageRateLimit, checkGeneralRateLimit } from './rateLimiter';
+import {
+  graphqlRequest,
+  sanitizeAttachmentForGql,
+  HEARTBEAT_MUTATION,
+  MY_CHAT_CONVERSATIONS_QUERY,
+  INITIATE_CONVERSATION_MUTATION,
+  SEND_MESSAGE_MUTATION,
+  DELETE_CONVERSATION_VIEW_MUTATION,
+  DELETE_CHAT_MESSAGE_MUTATION,
+  EDIT_CHAT_MESSAGE_MUTATION,
+  END_CONVERSATION_MUTATION,
+  REOPEN_CONVERSATION_MUTATION,
+  MARK_CONVERSATION_READ_MUTATION,
+} from './graphql/client';
 
 const CHANNEL_NAME = 'orqland_chat_channel';
 const STORAGE_PREFIX = 'orqland_user_chats_v1_';
 const TAB_ID = typeof window !== 'undefined' ? Math.random().toString(36).slice(2, 10) : 'server';
 
-async function getAuthHeaders(userEmail?: string): Promise<Record<string, string>> {
+async function getAuthHeaders(): Promise<Record<string, string>> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   };
@@ -21,16 +37,9 @@ async function getAuthHeaders(userEmail?: string): Promise<Record<string, string
       if (token) {
         headers['Authorization'] = `Bearer ${token}`;
       }
-      if (currentUser.email) {
-        headers['X-User-Email'] = currentUser.email;
-      }
-    } else if (userEmail) {
-      headers['X-User-Email'] = userEmail;
     }
   } catch {
-    if (userEmail) {
-      headers['X-User-Email'] = userEmail;
-    }
+    // ignore token error
   }
   return headers;
 }
@@ -274,7 +283,7 @@ export const chatService = {
   async syncUserProfile(email: string, name?: string | null, avatar?: string | null) {
     if (!email) return;
     try {
-      const headers = await getAuthHeaders(email);
+      const headers = await getAuthHeaders();
       await fetch('/api/user/sync', {
         method: 'POST',
         headers,
@@ -286,17 +295,12 @@ export const chatService = {
   },
 
   /**
-   * Send heartbeat to maintain online presence
+   * Send heartbeat to maintain online presence via GraphQL
    */
   async sendHeartbeat(email: string) {
     if (!email) return;
     try {
-      const headers = await getAuthHeaders(email);
-      await fetch('/api/user/heartbeat', {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ email }),
-      });
+      await graphqlRequest(HEARTBEAT_MUTATION);
     } catch {}
   },
 
@@ -308,42 +312,53 @@ export const chatService = {
   },
 
   /**
-   * Fetch conversations from backend server
+   * Fetch conversations from backend server via GraphQL
    */
-  async fetchConversations(userEmail: string): Promise<Conversation[]> {
+  async fetchConversations(userEmail: string, orqspaceId?: string): Promise<Conversation[]> {
     if (!userEmail) return [];
     const email = userEmail.trim().toLowerCase();
     try {
-      const authHeaders = await getAuthHeaders(email);
-      const res = await fetch(`/api/chat/list?email=${encodeURIComponent(email)}`, {
-        headers: authHeaders,
-        cache: 'no-store',
-      });
-      if (!res.ok) return loadCachedConversations(email);
-      const data = await res.json();
-      const list = Array.isArray(data.data)
-        ? data.data
-        : Array.isArray(data.conversations)
-        ? data.conversations
-        : null;
+      const data = await graphqlRequest<{ myChatConversations: Conversation[] }>(
+        MY_CHAT_CONVERSATIONS_QUERY,
+        orqspaceId ? { orqspaceId } : undefined
+      );
+      const list = data?.myChatConversations;
 
-      if (list) {
-        const purged = enforceAttachmentRetention(list);
+      if (Array.isArray(list)) {
+        const cached = loadCachedConversations(email);
+        const deduped = list.map((c) => {
+          const cachedConv = cached.find((p) => p.id === c.id);
+          const isCleared = Boolean(
+            c.deletedForClient ||
+            c.deletedByBusiness ||
+            (c.lastMessage === '' && (!c.messages || c.messages.length === 0))
+          );
+          const combined = isCleared
+            ? dedupeMessages(c.messages || [])
+            : (cachedConv
+                ? dedupeMessages([...(cachedConv.messages || []), ...(c.messages || [])])
+                : dedupeMessages(c.messages || []));
+          return {
+            ...c,
+            messages: combined,
+          };
+        });
+        const purged = enforceAttachmentRetention(deduped);
         saveCachedConversations(purged, email);
         return purged;
       }
       return loadCachedConversations(email);
     } catch (err) {
-      console.error('Failed to fetch conversations from server:', err);
+      console.warn('GraphQL conversation sync unavailable; using cached conversations:', err instanceof Error ? err.message : err);
       return loadCachedConversations(email);
     }
   },
 
   /**
-   * Clients initiate a chat with a Business.
-   * Calls /api/chat/initiate on server and updates local state.
+   * Clients initiate a chat with a Business via GraphQL.
    */
   async initiateChat(params: {
+    businessId?: string;
     clientEmail: string;
     clientName?: string;
     clientAvatar?: string;
@@ -353,19 +368,22 @@ export const chatService = {
     workspaceName?: string;
     initialMessage?: string;
   }): Promise<Conversation> {
-    const authHeaders = await getAuthHeaders(params.clientEmail);
-    const res = await fetch('/api/chat/initiate', {
-      method: 'POST',
-      headers: authHeaders,
-      body: JSON.stringify(params),
-    });
+    const data = await graphqlRequest<{ initiateConversation: Conversation }>(
+      INITIATE_CONVERSATION_MUTATION,
+      {
+        input: {
+          businessId: params.businessId || undefined,
+          businessEmail: params.businessEmail,
+          businessName: params.businessName,
+          businessAvatar: params.businessAvatar,
+          workspaceName: params.workspaceName,
+          category: 'Workspace',
+          initialMessage: params.initialMessage,
+        },
+      }
+    );
 
-    const data = await res.json();
-    if (!res.ok || !data.success) {
-      throw new Error(data.error || 'Failed to initiate conversation.');
-    }
-
-    const createdConv: Conversation = data.conversation || data.data;
+    const createdConv = data.initiateConversation;
 
     // Optimistically update cache
     const current = loadCachedConversations(params.clientEmail).filter((c) => c.id !== createdConv.id);
@@ -406,8 +424,10 @@ export const chatService = {
 
     // Optimistic UI update
     const now = Date.now();
+    const generatedId = optimisticId || generateUuid();
     const optimisticMessage: ChatMessage = {
-      id: optimisticId || `msg-${now}-${Math.random().toString(36).slice(2, 6)}`,
+      id: generatedId,
+      idempotencyKey: generatedId,
       conversationId,
       senderId: senderEmail,
       senderEmail,
@@ -426,7 +446,7 @@ export const chatService = {
     const targetIdx = currentConvs.findIndex((c) => c.id === conversationId);
     if (targetIdx >= 0) {
       const conv = currentConvs[targetIdx];
-      const updatedMessages = [...conv.messages, optimisticMessage];
+      const updatedMessages = upsertMessage(conv.messages, optimisticMessage);
       const lastMsgSummary = content || (attachments && attachments.length > 1 ? `[${attachments.length} Images]` : (attachment ? `[${attachment.type.toUpperCase()}]` : ''));
       currentConvs[targetIdx] = {
         ...conv,
@@ -437,16 +457,24 @@ export const chatService = {
       saveCachedConversations(currentConvs, senderEmail);
     }
 
-    // Call server API
-    const authHeaders = await getAuthHeaders(senderEmail);
-    const res = await fetch('/api/chat/send', {
-      method: 'POST',
-      headers: authHeaders,
-      body: JSON.stringify(params),
-    });
-
-    const data = await res.json();
-    if (!res.ok || !data.success) {
+    // Call GraphQL API
+    let confirmedMsg: ChatMessage;
+    try {
+      const gqlInput: Record<string, any> = {
+        conversationId,
+        content: content || '',
+        idempotencyKey: optimisticMessage.id,
+      };
+      if (attachment) gqlInput.attachment = sanitizeAttachmentForGql(attachment);
+      if (attachments?.length) {
+        gqlInput.attachments = attachments.map(sanitizeAttachmentForGql);
+      }
+      const data = await graphqlRequest<{ sendMessage: ChatMessage }>(
+        SEND_MESSAGE_MUTATION,
+        { input: gqlInput }
+      );
+      confirmedMsg = data.sendMessage;
+    } catch (err: any) {
       // Mark as failed in cache
       const latestConvs = loadCachedConversations(senderEmail);
       const idx = latestConvs.findIndex((c) => c.id === conversationId);
@@ -456,11 +484,9 @@ export const chatService = {
         );
         saveCachedConversations(latestConvs, senderEmail);
       }
-      throw new Error(data.error || 'Failed to send message.');
+      throw new Error(err?.message || 'Failed to send message.');
     }
 
-    // Replace with confirmed server conversation and message
-    const confirmedMsg: ChatMessage = (data.data?.id ? data.data : data.message) || optimisticMessage;
     const latestConvs = loadCachedConversations(senderEmail);
     const convIdx = latestConvs.findIndex((c) => c.id === conversationId);
     let targetConv: Conversation | null = null;
@@ -468,10 +494,10 @@ export const chatService = {
     if (convIdx >= 0) {
       latestConvs[convIdx] = {
         ...latestConvs[convIdx],
-        messages: latestConvs[convIdx].messages.map((m) =>
-          m.id === optimisticMessage.id || (m.status === 'sending' && m.content === content)
-            ? { ...confirmedMsg, status: 'delivered', isMe: true }
-            : m
+        messages: upsertMessage(
+          latestConvs[convIdx].messages,
+          { ...confirmedMsg, status: 'delivered', isMe: true },
+          optimisticMessage.id
         ),
       };
       targetConv = latestConvs[convIdx];
@@ -481,27 +507,20 @@ export const chatService = {
     // Cross-tab broadcast so other open tabs/windows update their view immediately
     notifyCrossTab();
 
-    return { message: confirmedMsg, conversation: targetConv || (data.conversation as Conversation) };
+    return { message: confirmedMsg, conversation: targetConv as Conversation };
   },
 
   /**
    * Delete Chat (Business only - clears business view)
    */
   async deleteChat(conversationId: string, userEmail: string): Promise<Conversation> {
-    const authHeaders = await getAuthHeaders(userEmail);
-    const res = await fetch('/api/chat/delete', {
-      method: 'POST',
-      headers: authHeaders,
-      body: JSON.stringify({ conversationId, userEmail }),
-    });
-
-    const data = await res.json();
-    if (!res.ok || !data.success) {
-      throw new Error(data.error || 'Failed to delete chat.');
-    }
+    const data = await graphqlRequest<{ deleteConversationView: Conversation }>(
+      DELETE_CONVERSATION_VIEW_MUTATION,
+      { id: conversationId }
+    );
+    const updatedConv = data.deleteConversationView;
 
     // Update local cache with cleared history conversation
-    const updatedConv: Conversation = data.conversation || data.data;
     if (updatedConv && updatedConv.id) {
       const latest = loadCachedConversations(userEmail).map((c) =>
         c.id === updatedConv.id ? updatedConv : c
@@ -540,28 +559,92 @@ export const chatService = {
       });
     }
 
-    const authHeaders = await getAuthHeaders(userEmail);
-    const res = await fetch('/api/chat/delete-message', {
-      method: 'POST',
-      headers: authHeaders,
-      body: JSON.stringify({ conversationId, messageId, userEmail }),
-    });
+    const data = await graphqlRequest<{ deleteChatMessage: ChatMessage }>(
+      DELETE_CHAT_MESSAGE_MUTATION,
+      {
+        input: { conversationId, messageId },
+      }
+    );
+    const deletedMsg = data.deleteChatMessage;
 
-    const data = await res.json();
-    if (!res.ok || !data.success) {
-      throw new Error(data.error || 'Failed to delete message.');
-    }
-
-    const updatedConv: Conversation = data.conversation || data.data;
-    if (updatedConv && updatedConv.id) {
-      const latest = loadCachedConversations(userEmail).map((c) =>
-        c.id === updatedConv.id ? updatedConv : c
+    const latest = loadCachedConversations(userEmail);
+    const convIdx = latest.findIndex((c) => c.id === conversationId);
+    let updatedConv: Conversation = existingConv as Conversation;
+    if (convIdx >= 0) {
+      const remainingMessages = latest[convIdx].messages.filter(
+        (m) =>
+          m.id !== messageId &&
+          m.id !== deletedMsg.id &&
+          (!m.idempotencyKey || (m.idempotencyKey !== messageId && m.idempotencyKey !== deletedMsg.id))
       );
+      const lastMsg = remainingMessages[remainingMessages.length - 1];
+      latest[convIdx] = {
+        ...latest[convIdx],
+        messages: remainingMessages,
+        lastMessage: lastMsg ? (lastMsg.content || (lastMsg.attachment ? `[${lastMsg.attachment.type.toUpperCase()}]` : '')) : '',
+        lastMessageTime: lastMsg ? lastMsg.timestamp : '',
+        lastMessageTimestamp: lastMsg ? lastMsg.createdAt : latest[convIdx].lastMessageTimestamp,
+      };
+      updatedConv = latest[convIdx];
       saveCachedConversations(latest, userEmail);
     }
     notifyCrossTab();
 
     return updatedConv;
+  },
+
+  /**
+   * Remove a deleted message from local memory and localStorage caches across all viewer scopes
+   */
+  removeMessageFromCache(conversationId: string, messageId: string) {
+    Object.keys(inMemoryCache).forEach((key) => {
+      inMemoryCache[key] = inMemoryCache[key].map((c) => {
+        if (c.id === conversationId) {
+          const remaining = (c.messages || []).filter(
+            (m) => m.id !== messageId && m.idempotencyKey !== messageId
+          );
+          const last = remaining[remaining.length - 1];
+          return {
+            ...c,
+            messages: remaining,
+            lastMessage: last ? (last.content || (last.attachment ? `[${last.attachment.type.toUpperCase()}]` : '')) : '',
+            lastMessageTime: last ? last.timestamp : '',
+          };
+        }
+        return c;
+      });
+      if (typeof window !== 'undefined') {
+        try {
+          const compact = sanitizeForLocalStorage(inMemoryCache[key]);
+          localStorage.setItem(getStorageKey(key), JSON.stringify(compact));
+        } catch {}
+      }
+    });
+  },
+
+  /**
+   * Clear all messages from memory and localStorage caches when a chat is cleared/deleted
+   */
+  clearConversationMessagesFromCache(conversationId: string) {
+    Object.keys(inMemoryCache).forEach((key) => {
+      inMemoryCache[key] = inMemoryCache[key].map((c) => {
+        if (c.id === conversationId) {
+          return {
+            ...c,
+            messages: [],
+            lastMessage: '',
+            lastMessageTime: '',
+          };
+        }
+        return c;
+      });
+      if (typeof window !== 'undefined') {
+        try {
+          const compact = sanitizeForLocalStorage(inMemoryCache[key]);
+          localStorage.setItem(getStorageKey(key), JSON.stringify(compact));
+        } catch {}
+      }
+    });
   },
 
   /**
@@ -573,23 +656,28 @@ export const chatService = {
     newContent: string,
     userEmail: string
   ): Promise<Conversation> {
-    const authHeaders = await getAuthHeaders(userEmail);
-    const res = await fetch('/api/chat/edit-message', {
-      method: 'POST',
-      headers: authHeaders,
-      body: JSON.stringify({ conversationId, messageId, newContent, userEmail }),
-    });
+    const data = await graphqlRequest<{ editChatMessage: ChatMessage }>(
+      EDIT_CHAT_MESSAGE_MUTATION,
+      {
+        input: { conversationId, messageId, content: newContent },
+      }
+    );
+    const editedMsg = data.editChatMessage;
 
-    const data = await res.json();
-    if (!res.ok || !data.success) {
-      throw new Error(data.error || 'Failed to edit message.');
-    }
-
-    const updatedConv: Conversation = data.conversation || data.data;
-    if (updatedConv && updatedConv.id) {
-      const latest = loadCachedConversations(userEmail).map((c) =>
-        c.id === updatedConv.id ? updatedConv : c
+    const latest = loadCachedConversations(userEmail);
+    const convIdx = latest.findIndex((c) => c.id === conversationId);
+    let updatedConv: Conversation = latest[0];
+    if (convIdx >= 0) {
+      const updatedMessages = latest[convIdx].messages.map((m) =>
+        m.id === messageId ? { ...m, ...editedMsg, isEdited: true, editedAt: editedMsg.editedAt || Date.now() } : m
       );
+      const lastMsg = updatedMessages[updatedMessages.length - 1];
+      latest[convIdx] = {
+        ...latest[convIdx],
+        messages: updatedMessages,
+        ...(lastMsg ? { lastMessage: lastMsg.content, lastMessageTime: lastMsg.timestamp } : {}),
+      };
+      updatedConv = latest[convIdx];
       saveCachedConversations(latest, userEmail);
     }
     notifyCrossTab();
@@ -601,19 +689,12 @@ export const chatService = {
    * End Chat (Client only - ends chat session)
    */
   async endChat(conversationId: string, userEmail: string): Promise<Conversation> {
-    const authHeaders = await getAuthHeaders(userEmail);
-    const res = await fetch('/api/chat/end', {
-      method: 'POST',
-      headers: authHeaders,
-      body: JSON.stringify({ conversationId, userEmail }),
-    });
+    const data = await graphqlRequest<{ endConversation: Conversation }>(
+      END_CONVERSATION_MUTATION,
+      { id: conversationId }
+    );
+    const updatedConv = data.endConversation;
 
-    const data = await res.json();
-    if (!res.ok || !data.success) {
-      throw new Error(data.error || 'Failed to end chat.');
-    }
-
-    const updatedConv: Conversation = data.conversation || data.data;
     if (updatedConv && updatedConv.id) {
       const latest = loadCachedConversations(userEmail).map((c) =>
         c.id === updatedConv.id ? updatedConv : c
@@ -629,19 +710,15 @@ export const chatService = {
    * Reopen an ended Chat session
    */
   async reopenChat(conversationId: string, userEmail: string, workspaceName?: string): Promise<Conversation> {
-    const authHeaders = await getAuthHeaders(userEmail);
-    const res = await fetch('/api/chat/reopen', {
-      method: 'POST',
-      headers: authHeaders,
-      body: JSON.stringify({ conversationId, userEmail, workspaceName }),
-    });
+    const data = await graphqlRequest<{ reopenConversation: Conversation }>(
+      REOPEN_CONVERSATION_MUTATION,
+      {
+        id: conversationId,
+        ...(workspaceName ? { input: { workspaceName } } : {}),
+      }
+    );
+    const updatedConv = data.reopenConversation;
 
-    const data = await res.json();
-    if (!res.ok || !data.success) {
-      throw new Error(data.error || 'Failed to reopen chat.');
-    }
-
-    const updatedConv: Conversation = data.conversation || data.data;
     if (updatedConv && updatedConv.id) {
       const latest = loadCachedConversations(userEmail).map((c) =>
         c.id === updatedConv.id ? updatedConv : c
@@ -674,12 +751,7 @@ export const chatService = {
     }
 
     try {
-      const authHeaders = await getAuthHeaders(readerEmail);
-      await fetch('/api/chat/read', {
-        method: 'POST',
-        headers: authHeaders,
-        body: JSON.stringify({ conversationId, readerEmail }),
-      });
+      await graphqlRequest(MARK_CONVERSATION_READ_MUTATION, { id: conversationId });
 
       // Also emit via WebSocket so all open tabs and active rooms receive immediate read receipt
       try {

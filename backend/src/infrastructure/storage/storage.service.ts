@@ -142,7 +142,9 @@ export class StorageService {
    * Delete object from underlying storage (Firebase Storage / S3 / Local Gateway)
    */
   async deleteObject(objectKey: string): Promise<boolean> {
-    const firebaseBucket = this.configService.get<string>('FIREBASE_STORAGE_BUCKET_ACTIVE');
+    const firebaseBucket =
+      this.configService.get<string>('FIREBASE_STORAGE_BUCKET_ACTIVE') ||
+      'openpurpl-f8dd3.firebasestorage.app';
     if (firebaseBucket) {
       try {
         const bucket = admin.storage().bucket(firebaseBucket);

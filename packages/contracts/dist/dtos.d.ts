@@ -1,9 +1,11 @@
 import { AttachmentType, Conversation, ChatMessage } from './models';
 export interface InitiateConversationDto {
-    businessEmail: string;
-    businessName: string;
+    businessId?: string;
+    businessEmail?: string;
+    businessName?: string;
     businessAvatar?: string;
     workspaceName?: string;
+    category?: string;
     initialMessage?: string;
 }
 export interface SendMessageDto {

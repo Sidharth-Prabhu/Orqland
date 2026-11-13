@@ -61,6 +61,10 @@ type ChatMessageGql {
   timestamp: String!
 }
 
+input ClearConversationHistoryInputGql {
+  conversationId: ID!
+}
+
 type ConversationGql {
   bookingInfo: BookingInfoGql
   businessAvatar: String!
@@ -82,6 +86,7 @@ type ConversationGql {
   lastMessageTime: String!
   lastMessageTimestamp: Float
   messages: [ChatMessageGql!]!
+  orqspaceId: ID
   participant: ConversationParticipantGql!
   status: String!
   unreadByBusiness: Int
@@ -120,9 +125,13 @@ type HeartbeatResultGql {
 }
 
 input InitiateConversationInputGql {
-  businessId: String!
-  category: String!
+  businessAvatar: String
+  businessEmail: String
+  businessId: String
+  businessName: String
+  category: String
   initialMessage: String
+  workspaceName: String
 }
 
 type LocationDataGql {
@@ -140,16 +149,34 @@ input LocationDataInputGql {
 }
 
 type Mutation {
+  clearConversationHistory(input: ClearConversationHistoryInputGql!): ConversationGql!
+  deleteChatMessage(input: DeleteMessageInputGql!): ChatMessageGql!
   deleteConversationView(id: ID!): ConversationGql!
   deleteMessage(input: DeleteMessageInputGql!): ChatMessageGql!
+  editChatMessage(input: EditMessageInputGql!): ChatMessageGql!
   editMessage(input: EditMessageInputGql!): ChatMessageGql!
   endConversation(id: ID!): ConversationGql!
   heartbeat: HeartbeatResultGql!
   initiateConversation(input: InitiateConversationInputGql!): ConversationGql!
   markConversationAsRead(id: ID!): Boolean!
+  markConversationRead(id: ID!): Boolean!
+  registerPushToken(input: RegisterPushTokenInputGql!): Boolean!
+  removePushToken(input: RemovePushTokenInputGql!): Boolean!
   reopenConversation(id: ID!, input: ReopenConversationInputGql): ConversationGql!
   requestSignedUpload(input: RequestSignedUploadInputGql!): SignedUploadPolicyGql!
   sendMessage(input: SendMessageInputGql!): ChatMessageGql!
+}
+
+type OrqspaceGql {
+  category: String
+  description: String
+  email: String
+  id: ID!
+  isActive: Boolean!
+  logoUrl: String
+  name: String!
+  orqspaceCode: String!
+  ownerId: ID!
 }
 
 type PaginatedMessagesGql {
@@ -159,10 +186,28 @@ type PaginatedMessagesGql {
 }
 
 type Query {
+  businesses: [UserProfileGql!]!
+  chatConversation(id: ID!): ConversationGql!
+
+  """Active workspaces directory"""
+  chatDirectory: [OrqspaceGql!]!
+  chatMessages(conversationId: ID!, cursor: String, limit: Int = 50): PaginatedMessagesGql!
   conversation(id: ID!): ConversationGql!
   conversations: [ConversationGql!]!
   me: UserProfileGql!
   messages(beforeTimestamp: Float, conversationId: ID!, limit: Int = 50): PaginatedMessagesGql!
+
+  """List conversations for current user or owned workspace"""
+  myChatConversations(orqspaceId: ID): [ConversationGql!]!
+}
+
+input RegisterPushTokenInputGql {
+  platform: String
+  token: String!
+}
+
+input RemovePushTokenInputGql {
+  token: String!
 }
 
 input ReopenConversationInputGql {
@@ -185,9 +230,12 @@ input SendMessageInputGql {
 }
 
 type SignedUploadPolicyGql {
+  attachmentId: String
   downloadUrl: String!
   expiresAt: Float!
+  expiresInSeconds: Int
   key: String!
+  objectKey: String
   uploadUrl: String!
 }
 

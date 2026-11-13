@@ -10,7 +10,6 @@ export interface BusinessDirectoryItem {
     status: 'Open' | 'Closed';
     verified: boolean;
     services: string[];
+    ownerId?: string;
 }
-export declare const INITIAL_BUSINESSES: BusinessDirectoryItem[];
-export declare const BUSINESS_DIRECTORY: BusinessDirectoryItem[];
 //# sourceMappingURL=businesses.d.ts.map

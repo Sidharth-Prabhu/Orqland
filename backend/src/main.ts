@@ -20,7 +20,7 @@ async function bootstrap() {
       ],
       credentials: true,
       methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-      allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'X-User-Email'],
+      allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
     },
   });
 
@@ -28,6 +28,7 @@ async function bootstrap() {
   // Raw base64 attachments must not travel inside JSON messages
   app.use(bodyParser.json({ limit: '2mb' }));
   app.use(bodyParser.urlencoded({ limit: '2mb', extended: true }));
+  app.use(bodyParser.raw({ type: ['image/*', 'application/pdf', 'application/octet-stream'], limit: '10mb' }));
 
   // Versioning & Prefix Convention (matching orqland-engine)
   app.setGlobalPrefix('api', {
@@ -50,8 +51,9 @@ async function bootstrap() {
     })
   );
 
-  // Redis Socket.IO adapter
+  // Connect Redis before attaching Socket.IO Redis adapter
   const redisService = app.get(RedisService);
+  await redisService.onModuleInit();
   const redisIoAdapter = new RedisIoAdapter(app, redisService);
   app.useWebSocketAdapter(redisIoAdapter);
 

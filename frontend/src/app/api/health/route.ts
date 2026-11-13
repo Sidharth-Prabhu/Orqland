@@ -1,10 +1,9 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse, connection } from 'next/server';
 import os from 'os';
 
-export async function GET(req: NextRequest) {
+export async function GET() {
+  await connection();
   try {
-    // Read request URL or headers to prevent static build-time caching
-    const url = req.url;
     const memoryUsage = process.memoryUsage();
     const cpus = os.cpus();
 

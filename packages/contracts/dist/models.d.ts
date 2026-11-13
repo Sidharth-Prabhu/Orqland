@@ -78,6 +78,7 @@ export interface Conversation {
     clientName: string;
     clientAvatar: string;
     businessId: string;
+    orqspaceId?: string;
     businessEmail: string;
     businessName: string;
     businessAvatar: string;

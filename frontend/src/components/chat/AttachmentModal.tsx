@@ -7,6 +7,7 @@ import { validateAttachmentFile } from '@/lib/security';
 import { generatePdfThumbnail } from '@/lib/pdfThumbnail';
 import { compressImageIfNeeded } from '@/lib/imageCompressor';
 import { uploadFileToFirebaseStorage } from '@/lib/firebaseStorage';
+import { generateUuid } from '@/lib/uuid';
 import { MAX_ATTACHMENT_SIZE_BYTES, ATTACHMENT_RETENTION_MS } from '@/lib/constants';
 import { ChatAttachment } from '@/types/chat';
 import { auth } from '@/lib/firebase';
@@ -14,6 +15,7 @@ import { auth } from '@/lib/firebase';
 interface AttachmentModalProps {
   isOpen: boolean;
   onClose: () => void;
+  conversationId?: string;
   onSendAttachment: (
     attachment: ChatAttachment,
     optionalText?: string,
@@ -36,7 +38,7 @@ function buildFileAttachment(
 ): ChatAttachment {
   const now = Date.now();
   return {
-    id: `att-${now}-${Math.random().toString(36).slice(2, 6)}`,
+    id: generateUuid(),
     type: fileType,
     name: file.name,
     url,
@@ -52,6 +54,7 @@ function buildFileAttachment(
 export const AttachmentModal: React.FC<AttachmentModalProps> = ({
   isOpen,
   onClose,
+  conversationId,
   onSendAttachment,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -146,7 +149,7 @@ export const AttachmentModal: React.FC<AttachmentModalProps> = ({
       const uploadPromises = items.map(async (item) => {
         const uploadRes = await uploadFileToFirebaseStorage(
           item.file,
-          'modal_uploads',
+          conversationId || 'modal_uploads',
           auth.currentUser?.email || undefined
         );
         let thumb = item.previewUrl;

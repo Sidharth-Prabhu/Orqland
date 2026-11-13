@@ -30,6 +30,7 @@ import {
 } from 'lucide-react';
 import { Conversation, ChatMessage, ChatAttachment } from '@/types/chat';
 import { chatService } from '@/lib/chatService';
+import { dedupeMessages } from '@/lib/messageState';
 import {
   isBusinessUser,
   detectSensitiveContent,
@@ -39,7 +40,9 @@ import {
 import { generatePdfThumbnail } from '@/lib/pdfThumbnail';
 import { compressImageIfNeeded } from '@/lib/imageCompressor';
 import { uploadFileToFirebaseStorage } from '@/lib/firebaseStorage';
+import { generateUuid } from '@/lib/uuid';
 import { MAX_ATTACHMENT_SIZE_BYTES, ATTACHMENT_RETENTION_MS } from '@/lib/constants';
+import { useAuth } from '@/context/AuthContext';
 import { DeleteChatModal } from '@/components/chat/DeleteChatModal';
 import { EndChatModal } from '@/components/chat/EndChatModal';
 import { AttachmentModal } from '@/components/chat/AttachmentModal';
@@ -417,7 +420,8 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
   const prevMessagesCountRef = useRef<number>(conversation.messages.length);
   const isNearBottomRef = useRef<boolean>(true);
 
-  const isBusiness = isBusinessUser(currentUserEmail);
+  const { backendRole } = useAuth();
+  const isBusiness = isBusinessUser(currentUserEmail, backendRole);
   const isChatEnded = conversation.status === 'ended';
 
   const scrollToBottom = (behavior: ScrollBehavior = 'smooth') => {
@@ -491,83 +495,59 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
       return;
     }
 
-    // If there are staged files, send optimistically immediately (0ms delay) and upload in the background
+    // If there are staged files, upload and send
     if (stagedFiles.length > 0) {
+      setIsSendingAttachments(true);
       const filesToProcess = [...stagedFiles];
       const textToSend = inputText.trim();
       const now = Date.now();
 
-      // Clear input bar and staged previews immediately for snappy Telegram/WhatsApp feel
+      // Clear typing input immediately
       setInputText('');
-      clearStagedFiles();
 
-      // Create optimistic attachments with local preview blob URLs
-      const optimisticAttachments = filesToProcess.map((item, idx) => ({
-        id: `att-temp-${now}-${idx}-${Math.random().toString(36).slice(2, 6)}`,
-        type: item.type,
-        name: item.file.name,
-        url: item.previewUrl,
-        thumbnailUrl: item.previewUrl,
-        size: item.file.size,
-        mimeType: item.file.type || (item.type === 'pdf' ? 'application/pdf' : 'image/jpeg'),
-        uploadedAt: now,
-        expiresAt: now + ATTACHMENT_RETENTION_MS,
-      }));
+      try {
+        const uploadPromises = filesToProcess.map(async (item) => {
+          const uploadRes = await uploadFileToFirebaseStorage(
+            item.file,
+            conversation.id,
+            currentUserEmail
+          );
 
-      // Render optimistic message in chat bubble with 0ms perceived latency
-      onSendMessage(textToSend, optimisticAttachments[0], optimisticAttachments, true);
-
-      // Perform cloud upload in parallel in the background without locking the input bar
-      (async () => {
-        try {
-          const uploadPromises = filesToProcess.map(async (item, idx) => {
-            const uploadRes = await uploadFileToFirebaseStorage(
-              item.file,
-              conversation.id,
-              currentUserEmail
-            );
-
-            let thumb: string | undefined = undefined;
-            if (item.type === 'pdf') {
-              try {
-                thumb = await generatePdfThumbnail(item.file);
-              } catch {
-                thumb = undefined;
-              }
+          let thumb: string | undefined = undefined;
+          if (item.type === 'pdf') {
+            try {
+              thumb = await generatePdfThumbnail(item.file);
+            } catch {
+              thumb = undefined;
             }
+          }
 
-            return {
-              id: optimisticAttachments[idx].id,
-              type: item.type,
-              name: item.file.name,
-              url: uploadRes.url,
-              objectKey: uploadRes.storagePath,
-              thumbnailUrl: thumb || undefined,
-              size: uploadRes.size,
-              mimeType: uploadRes.mimeType,
-              uploadedAt: now,
-              expiresAt: now + ATTACHMENT_RETENTION_MS,
-            };
-          });
+          return {
+            id: generateUuid(),
+            type: item.type,
+            name: item.file.name,
+            url: uploadRes.url,
+            objectKey: uploadRes.storagePath,
+            thumbnailUrl: thumb || undefined,
+            size: uploadRes.size,
+            mimeType: uploadRes.mimeType,
+            uploadedAt: now,
+            expiresAt: now + ATTACHMENT_RETENTION_MS,
+          };
+        });
 
-          const finalAttachments = await Promise.all(uploadPromises);
+        const finalAttachments = await Promise.all(uploadPromises);
 
-          // Update backend & cross-tab sync with verified Cloud Storage URLs
-          await chatService.sendMessage({
-            conversationId: conversation.id,
-            senderEmail: currentUserEmail,
-            senderName: isBusiness ? (conversation.businessName || 'Business') : (conversation.clientName || 'Client'),
-            senderAvatar: isBusiness ? (conversation.businessAvatar || '') : (conversation.clientAvatar || ''),
-            content: textToSend,
-            attachment: finalAttachments[0],
-            attachments: finalAttachments,
-          });
-        } catch (err) {
-          console.error('Failed to complete background attachment upload:', err);
-          setAttachmentError('Some attachments failed to upload to Cloud Storage. Please check connection.');
-        }
-      })();
+        // Clear staged files and clean up preview URLs after successful upload
+        clearStagedFiles();
 
+        onSendMessage(textToSend, finalAttachments[0], finalAttachments);
+      } catch (err: unknown) {
+        console.error('Failed to complete attachment upload:', err);
+        setAttachmentError('Failed to upload attachment. Please check file size and network connection.');
+      } finally {
+        setIsSendingAttachments(false);
+      }
       return;
     }
 
@@ -964,7 +944,14 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
         ) : (
           <>
             {(() => {
-              const filteredMessages = conversation.messages.filter((msg) => {
+              const filteredMessages = dedupeMessages(conversation.messages).filter((msg) => {
+                if (
+                  msg.deletedForEveryone ||
+                  msg.content === 'This message was deleted' ||
+                  msg.content === 'This message was deleted.'
+                ) {
+                  return false;
+                }
                 if (!searchQuery.trim()) return true;
                 const q = searchQuery.toLowerCase();
                 return (
@@ -1740,6 +1727,7 @@ export const ChatConversation: React.FC<ChatConversationProps> = ({
       <AttachmentModal
         isOpen={isAttachmentModalOpen}
         onClose={() => setIsAttachmentModalOpen(false)}
+        conversationId={conversation.id}
         onSendAttachment={handleSendAttachment}
       />
 

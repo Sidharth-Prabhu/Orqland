@@ -13,7 +13,7 @@ import { DeleteChatModal } from '@/components/chat/DeleteChatModal';
 import { ReopenPromptModal } from '@/components/chat/ReopenPromptModal';
 import { useAuth } from '@/context/AuthContext';
 import { chatService } from '@/lib/chatService';
-import { BUSINESS_EMAIL } from '@/lib/constants';
+import { dedupeMessages, reconcileMessageAck, upsertMessage } from '@/lib/messageState';
 import { isBusinessUser } from '@/lib/security';
 import { Conversation, UserProfile, ChatAttachment, ChatMessage } from '@/types/chat';
 import { MessageSquarePlus } from 'lucide-react';
@@ -30,13 +30,14 @@ import { useChatUiStore } from '@/stores/useChatUiStore';
 import { useConversationsQuery } from '@/features/chat/hooks/useConversationsQuery';
 import { useMessagesQuery } from '@/features/chat/hooks/useMessagesQuery';
 import { useChatMutations } from '@/features/chat/hooks/useChatMutations';
+import { generateUuid } from '@/lib/uuid';
 
 export default function Home() {
   const router = useRouter();
-  const { user, loading } = useAuth();
+  const { user, backendRole, loading } = useAuth();
 
   // Role verification: check if current authenticated user owns a business/workspace
-  const isBusiness = isBusinessUser(user?.email);
+  const isBusiness = isBusinessUser(user?.email, backendRole);
 
   // Active view perspective is derived strictly from user role
   const activeViewMode: 'client' | 'business' = isBusiness ? 'business' : 'client';
@@ -69,10 +70,7 @@ export default function Home() {
       setConversations((prev) =>
         prev.map((c) => {
           if (c.id === msg.conversationId) {
-            const exists = c.messages.some((m) => m.id === msg.id || (m.idempotencyKey && m.idempotencyKey === msg.idempotencyKey));
-            const newMessages = exists
-              ? c.messages.map((m) => (m.id === msg.id || (m.idempotencyKey && m.idempotencyKey === msg.idempotencyKey) ? msg : m))
-              : [...c.messages, msg];
+            const newMessages = upsertMessage(c.messages, msg);
             const isMe = msg.isMe;
             const isCurrentlyViewing = c.id === activeConversationId;
             return {
@@ -102,12 +100,7 @@ export default function Home() {
       setConversations((prev) =>
         prev.map((c) => ({
           ...c,
-          messages: c.messages.map((m) =>
-            (ack.clientGeneratedId && (m.id === ack.clientGeneratedId || m.idempotencyKey === ack.clientGeneratedId)) ||
-            m.id === ack.messageId
-              ? { ...m, id: ack.messageId, status: 'delivered' as const }
-              : m
-          ),
+          messages: reconcileMessageAck(c.messages, ack),
         }))
       );
     },
@@ -118,7 +111,11 @@ export default function Home() {
             ? {
                 ...c,
                 messages: c.messages.map((m) =>
-                  m.id === data.messageId ? { ...m, content: data.content, isEdited: true, editedAt: Date.now() } : m
+                  m.id === data.messageId ||
+                  (data.clientMessageId && m.id === data.clientMessageId) ||
+                  (m.idempotencyKey && (m.idempotencyKey === data.messageId || m.idempotencyKey === data.clientMessageId))
+                    ? { ...m, content: data.content, isEdited: true, editedAt: Date.now() }
+                    : m
                 ),
               }
             : c
@@ -131,8 +128,11 @@ export default function Home() {
           c.id === data.conversationId
             ? {
                 ...c,
-                messages: c.messages.map((m) =>
-                  m.id === data.messageId ? { ...m, content: 'This message was deleted.', deletedForEveryone: true } : m
+                messages: c.messages.filter(
+                  (m) =>
+                    m.id !== data.messageId &&
+                    (!data.clientMessageId || m.id !== data.clientMessageId) &&
+                    (!m.idempotencyKey || (m.idempotencyKey !== data.messageId && m.idempotencyKey !== data.clientMessageId))
                 ),
               }
             : c
@@ -145,6 +145,7 @@ export default function Home() {
           c.id === data.conversationId
             ? {
                 ...c,
+                ...(data.clearedAt ? { messages: [], lastMessage: '', lastMessageTime: '' } : {}),
                 ...(data.lastMessage !== undefined ? { lastMessage: data.lastMessage } : {}),
                 ...(data.lastMessageTime !== undefined ? { lastMessageTime: data.lastMessageTime } : {}),
                 lastMessageTimestamp: Date.now(),
@@ -182,6 +183,29 @@ export default function Home() {
   const conversationsQuery = useConversationsQuery();
   const messagesQuery = useMessagesQuery(activeConversationId || null);
   const chatMutations = useChatMutations();
+
+  // Synchronize messages loaded from GraphQL query for active conversation
+  useEffect(() => {
+    if (!activeConversationId || !messagesQuery.data?.messages?.length) return;
+    const incomingMessages = messagesQuery.data.messages;
+    setConversations((prev) =>
+      prev.map((c) => {
+        if (c.id === activeConversationId) {
+          const isCleared = Boolean(
+            c.deletedForClient ||
+            c.deletedByBusiness ||
+            (c.lastMessage === '' && c.messages.length === 0)
+          );
+          if (isCleared) return c;
+          return {
+            ...c,
+            messages: dedupeMessages([...(c.messages || []), ...incomingMessages]),
+          };
+        }
+        return c;
+      })
+    );
+  }, [activeConversationId, messagesQuery.data?.messages]);
   const [showDetailsSidebar, setShowDetailsSidebar] = useState(false);
   const [isStartChatModalOpen, setIsStartChatModalOpen] = useState(false);
   const [isEndModalOpen, setIsEndModalOpen] = useState(false);
@@ -370,13 +394,20 @@ export default function Home() {
         // Merge messages so ongoing local messages aren't prematurely replaced by an empty list
         return sanitizedList.map((incoming) => {
           const old = prev.find((p) => p.id === incoming.id);
-          if (old && incoming.messages.length === 0 && old.messages.length > 0) {
-            return {
-              ...incoming,
-              messages: old.messages,
-            };
-          }
-          return incoming;
+          const isCleared = Boolean(
+            incoming.deletedForClient ||
+            incoming.deletedByBusiness ||
+            (incoming.lastMessage === '' && (!incoming.messages || incoming.messages.length === 0))
+          );
+          const mergedMessages = isCleared
+            ? dedupeMessages(incoming.messages || [])
+            : (old
+                ? dedupeMessages([...(old.messages || []), ...(incoming.messages || [])])
+                : dedupeMessages(incoming.messages || []));
+          return {
+            ...incoming,
+            messages: mergedMessages,
+          };
         });
       });
 
@@ -585,7 +616,7 @@ export default function Home() {
         name: user.displayName ? `${user.displayName}'s Workspace` : 'Orqland Business Workspace',
         handle: user.email ? `@${user.email.split('@')[0]}` : '@workspace',
         avatar: user.photoURL || '',
-        email: user.email || BUSINESS_EMAIL,
+        email: user.email || '',
         role: 'business',
         wsid: `WS#${user.uid.slice(0, 8).toUpperCase()}#`,
         businessStatus: 'Open',
@@ -620,8 +651,10 @@ export default function Home() {
     const timeString = new Date(now).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
     // 1. Optimistic instant local state update
+    const optimisticId = generateUuid();
     const optimisticMessage: ChatMessage = {
-      id: `msg-${now}-${Math.random().toString(36).slice(2, 6)}`,
+      id: optimisticId,
+      idempotencyKey: optimisticId,
       conversationId: activeConversation.id,
       senderId: senderEmail,
       senderEmail,
@@ -646,7 +679,7 @@ export default function Home() {
             lastMessage: lastMsgSummary,
             lastMessageTime: timeString,
             lastMessageTimestamp: now,
-            messages: [...c.messages, optimisticMessage],
+            messages: upsertMessage(c.messages, optimisticMessage),
           };
         }
         return c;
@@ -677,17 +710,15 @@ export default function Home() {
           if (c.id === activeConversation.id) {
             return {
               ...c,
-              messages: c.messages.map((m) =>
-                m.id === optimisticMessage.id ||
-                m.id === deliveredMsg.id ||
-                (m.status === 'sending' && m.content === text)
-                  ? {
-                      ...m,
-                      id: deliveredMsg.id || m.id,
-                      status: 'delivered' as const,
-                      createdAt: deliveredMsg.createdAt || m.createdAt,
-                    }
-                  : m
+              messages: upsertMessage(
+                c.messages,
+                {
+                  ...deliveredMsg,
+                  id: deliveredMsg.id || optimisticMessage.id,
+                  idempotencyKey: deliveredMsg.idempotencyKey || optimisticMessage.id,
+                  status: 'delivered' as const,
+                },
+                optimisticMessage.id
               ),
             };
           }
@@ -886,6 +917,7 @@ export default function Home() {
 
   // Initiate Chat: Clients initiate conversations with a business
   const handleInitiateChat = async (data: {
+    businessId?: string;
     businessEmail: string;
     businessName: string;
     businessAvatar?: string;
@@ -928,8 +960,10 @@ export default function Home() {
         const sender = isBusiness && activeViewMode !== 'client' ? currentBusinessUser : currentClientUser;
         const senderEmail = clientEmail;
 
+        const optimisticId = generateUuid();
         const optimisticMessage: ChatMessage = {
-          id: `msg-${now}-${Math.random().toString(36).slice(2, 6)}`,
+          id: optimisticId,
+          idempotencyKey: optimisticId,
           conversationId: existingConv.id,
           senderId: senderEmail,
           senderEmail,
@@ -950,7 +984,7 @@ export default function Home() {
                   lastMessage: text,
                   lastMessageTime: timeString,
                   lastMessageTimestamp: now,
-                  messages: [...c.messages, optimisticMessage],
+                  messages: upsertMessage(c.messages, optimisticMessage),
                 }
               : c
           )
@@ -972,10 +1006,15 @@ export default function Home() {
                 c.id === existingConv.id
                   ? {
                       ...c,
-                      messages: c.messages.map((m) =>
-                        m.id === optimisticMessage.id || m.id === deliveredMsg.id || (m.status === 'sending' && m.content === text)
-                          ? { ...m, id: deliveredMsg.id || m.id, status: 'delivered' as const }
-                          : m
+                      messages: upsertMessage(
+                        c.messages,
+                        {
+                          ...deliveredMsg,
+                          id: deliveredMsg.id || optimisticMessage.id,
+                          idempotencyKey: deliveredMsg.idempotencyKey || optimisticMessage.id,
+                          status: 'delivered' as const,
+                        },
+                        optimisticMessage.id
                       ),
                     }
                   : c
@@ -1002,6 +1041,7 @@ export default function Home() {
     }
 
     const created = await chatService.initiateChat({
+      businessId: data.businessId,
       clientEmail,
       clientName: currentClientUser.name,
       clientAvatar: currentClientUser.avatar,

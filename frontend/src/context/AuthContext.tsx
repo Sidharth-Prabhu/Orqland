@@ -12,9 +12,11 @@ import {
   onAuthStateChanged,
 } from 'firebase/auth';
 import { auth, googleProvider, formatAuthError } from '@/lib/firebase';
+import { graphqlRequest, ME_QUERY } from '@/lib/graphql/client';
 
 interface AuthContextType {
   user: User | null;
+  backendRole: 'client' | 'business' | null;
   loading: boolean;
   isAuthenticating: boolean;
   error: string | null;
@@ -30,6 +32,7 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
+  const [backendRole, setBackendRole] = useState<'client' | 'business' | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [isAuthenticating, setIsAuthenticating] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
@@ -43,10 +46,23 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       (currentUser) => {
         setUser(currentUser);
         setLoading(false);
+        if (currentUser) {
+          graphqlRequest<{ me?: { role?: 'client' | 'business' } }>(ME_QUERY)
+            .then((data) => {
+              const role = data?.me?.role;
+              setBackendRole(role === 'business' ? 'business' : 'client');
+            })
+            .catch(() => {
+              setBackendRole(null);
+            });
+        } else {
+          setBackendRole(null);
+        }
       },
       (err) => {
         console.error('Firebase onAuthStateChanged error:', err);
         setError(formatAuthError(err));
+        setBackendRole(null);
         setLoading(false);
       }
     );
@@ -143,6 +159,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     <AuthContext.Provider
       value={{
         user,
+        backendRole,
         loading,
         isAuthenticating,
         error,

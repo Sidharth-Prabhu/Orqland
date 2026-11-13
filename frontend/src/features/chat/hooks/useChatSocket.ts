@@ -11,12 +11,14 @@ import {
   PaginatedMessagesResponseDto,
 } from '@orqland/contracts';
 import { isPageInBackground, sendBrowserNotification } from '@/lib/browserNotifications';
+import { reconcileMessageAck, upsertMessage } from '@/lib/messageState';
+import { chatService } from '@/lib/chatService';
 
 interface UseChatSocketOptions {
   onNewMessage?: (msg: ChatMessage) => void;
   onMessageAck?: (ack: { messageId: string; clientGeneratedId?: string; status: string }) => void;
-  onMessageEdited?: (data: { messageId: string; conversationId: string; content: string }) => void;
-  onMessageDeleted?: (data: { messageId: string; conversationId: string }) => void;
+  onMessageEdited?: (data: { messageId: string; conversationId: string; content: string; clientMessageId?: string }) => void;
+  onMessageDeleted?: (data: { messageId: string; conversationId: string; clientMessageId?: string }) => void;
   onMessageReadUpdate?: (data: { conversationId: string; readCount: number }) => void;
   onConversationUpdated?: (data: {
     conversationId: string;
@@ -27,6 +29,7 @@ interface UseChatSocketOptions {
     endedAt?: number | null;
     endedBy?: string | null;
     workspaceName?: string;
+    clearedAt?: number;
   }) => void;
 }
 
@@ -80,24 +83,9 @@ export function useChatSocket(
           ['messages', newMsg.conversationId],
           (old) => {
             if (!old) return { messages: [msgWithMe], hasMore: false };
-            const exists = old.messages.some(
-              (m) =>
-                m.id === newMsg.id ||
-                (m.idempotencyKey && m.idempotencyKey === newMsg.idempotencyKey)
-            );
-            if (exists) {
-              return {
-                ...old,
-                messages: old.messages.map((m) =>
-                  m.id === newMsg.id || (m.idempotencyKey && m.idempotencyKey === newMsg.idempotencyKey)
-                    ? msgWithMe
-                    : m
-                ),
-              };
-            }
             return {
               ...old,
-              messages: [...old.messages, msgWithMe],
+              messages: upsertMessage(old.messages, msgWithMe),
             };
           }
         );
@@ -170,19 +158,14 @@ export function useChatSocket(
             if (!old) return old;
             return {
               ...old,
-              messages: old.messages.map((m) =>
-                (ack.clientGeneratedId && (m.id === ack.clientGeneratedId || m.idempotencyKey === ack.clientGeneratedId)) ||
-                m.id === ack.messageId
-                  ? { ...m, id: ack.messageId, status: 'delivered' as const }
-                  : m
-              ),
+              messages: reconcileMessageAck(old.messages, ack),
             };
           }
         );
       };
 
       // Handle message edited
-      const handleMessageEdited = (data: { messageId: string; conversationId: string; content: string }) => {
+      const handleMessageEdited = (data: { messageId: string; conversationId: string; content: string; clientMessageId?: string }) => {
         optionsRef.current?.onMessageEdited?.(data);
 
         queryClient.setQueryData<PaginatedMessagesResponseDto>(
@@ -192,7 +175,9 @@ export function useChatSocket(
             return {
               ...old,
               messages: old.messages.map((m) =>
-                m.id === data.messageId
+                m.id === data.messageId ||
+                (data.clientMessageId && m.id === data.clientMessageId) ||
+                (m.idempotencyKey && (m.idempotencyKey === data.messageId || m.idempotencyKey === data.clientMessageId))
                   ? { ...m, content: data.content, isEdited: true, editedAt: Date.now() }
                   : m
               ),
@@ -202,8 +187,12 @@ export function useChatSocket(
       };
 
       // Handle message deleted
-      const handleMessageDeleted = (data: { messageId: string; conversationId: string }) => {
+      const handleMessageDeleted = (data: { messageId: string; conversationId: string; clientMessageId?: string }) => {
         optionsRef.current?.onMessageDeleted?.(data);
+        chatService.removeMessageFromCache(data.conversationId, data.messageId);
+        if (data.clientMessageId) {
+          chatService.removeMessageFromCache(data.conversationId, data.clientMessageId);
+        }
 
         queryClient.setQueryData<PaginatedMessagesResponseDto>(
           ['messages', data.conversationId],
@@ -211,10 +200,11 @@ export function useChatSocket(
             if (!old) return old;
             return {
               ...old,
-              messages: old.messages.map((m) =>
-                m.id === data.messageId
-                  ? { ...m, content: 'This message was deleted.', deletedForEveryone: true }
-                  : m
+              messages: old.messages.filter(
+                (m) =>
+                  m.id !== data.messageId &&
+                  (!data.clientMessageId || m.id !== data.clientMessageId) &&
+                  (!m.idempotencyKey || (m.idempotencyKey !== data.messageId && m.idempotencyKey !== data.clientMessageId))
               ),
             };
           }
@@ -243,8 +233,17 @@ export function useChatSocket(
         endedAt?: number | null;
         endedBy?: string | null;
         workspaceName?: string;
+        clearedAt?: number;
       }) => {
         optionsRef.current?.onConversationUpdated?.(data);
+
+        if (data.clearedAt) {
+          chatService.clearConversationMessagesFromCache(data.conversationId);
+          queryClient.setQueryData<PaginatedMessagesResponseDto>(
+            ['messages', data.conversationId],
+            { messages: [], hasMore: false }
+          );
+        }
 
         queryClient.setQueryData<Conversation[]>(['conversations', user?.email], (old) => {
           if (!old) return [];
@@ -252,6 +251,7 @@ export function useChatSocket(
             c.id === data.conversationId
               ? {
                   ...c,
+                  ...(data.clearedAt ? { messages: [], lastMessage: '', lastMessageTime: '' } : {}),
                   ...(data.lastMessage !== undefined ? { lastMessage: data.lastMessage } : {}),
                   ...(data.lastMessageTime !== undefined ? { lastMessageTime: data.lastMessageTime } : {}),
                   lastMessageTimestamp: data.lastMessageTimestamp || Date.now(),

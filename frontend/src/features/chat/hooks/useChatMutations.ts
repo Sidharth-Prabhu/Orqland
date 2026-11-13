@@ -11,41 +11,39 @@ import {
   PaginatedMessagesResponseDto,
 } from '@orqland/contracts';
 import { useAuth } from '@/context/AuthContext';
+import { upsertMessage } from '@/lib/messageState';
+import {
+  graphqlRequest,
+  sanitizeAttachmentForGql,
+  SEND_MESSAGE_MUTATION,
+  EDIT_CHAT_MESSAGE_MUTATION,
+  DELETE_CHAT_MESSAGE_MUTATION,
+  END_CONVERSATION_MUTATION,
+  REOPEN_CONVERSATION_MUTATION,
+  DELETE_CONVERSATION_VIEW_MUTATION,
+  MARK_CONVERSATION_READ_MUTATION,
+} from '@/lib/graphql/client';
 
 export function useChatMutations() {
   const queryClient = useQueryClient();
   const { user } = useAuth();
 
-  const getHeaders = async () => {
-    const token = user ? await user.getIdToken().catch(() => '') : '';
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-    };
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
-    }
-    if (user?.email) {
-      headers['X-User-Email'] = user.email;
-    }
-    return headers;
-  };
-
   const sendMessageMutation = useMutation({
     mutationFn: async (dto: SendMessageDto) => {
-      const headers = await getHeaders();
-      const res = await fetch('/api/chat/messages', {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(dto),
-      });
-
-      if (!res.ok) {
-        const errorData = await res.json().catch(() => ({}));
-        throw new Error(errorData.message || 'Failed to send message');
+      const input: Record<string, any> = {
+        conversationId: dto.conversationId,
+        content: dto.content || '',
+      };
+      if (dto.idempotencyKey) input.idempotencyKey = dto.idempotencyKey;
+      if (dto.attachment) input.attachment = sanitizeAttachmentForGql(dto.attachment);
+      if (dto.attachments?.length) {
+        input.attachments = dto.attachments.map(sanitizeAttachmentForGql);
       }
-
-      const json = await res.json();
-      return json.data as ChatMessage;
+      const data = await graphqlRequest<{ sendMessage: ChatMessage }>(
+        SEND_MESSAGE_MUTATION,
+        { input }
+      );
+      return data.sendMessage;
     },
     onMutate: async (dto) => {
       // Optimistic update
@@ -78,7 +76,7 @@ export function useChatMutations() {
       if (previousMessages) {
         queryClient.setQueryData<PaginatedMessagesResponseDto>(['messages', dto.conversationId], {
           ...previousMessages,
-          messages: [...previousMessages.messages, optimisticMessage],
+          messages: upsertMessage(previousMessages.messages, optimisticMessage),
         });
       }
 
@@ -96,11 +94,7 @@ export function useChatMutations() {
           if (!old) return { messages: [savedMessage], hasMore: false };
           return {
             ...old,
-            messages: old.messages.map((m) =>
-              m.id === context?.tempId || m.idempotencyKey === savedMessage.idempotencyKey
-                ? savedMessage
-                : m
-            ),
+            messages: upsertMessage(old.messages, savedMessage, context?.tempId),
           };
         }
       );
@@ -124,20 +118,17 @@ export function useChatMutations() {
 
   const editMessageMutation = useMutation({
     mutationFn: async (dto: EditMessageDto) => {
-      const headers = await getHeaders();
-      const res = await fetch(`/api/chat/messages/${dto.messageId}`, {
-        method: 'PATCH',
-        headers,
-        body: JSON.stringify(dto),
-      });
-
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.message || 'Failed to edit message');
-      }
-
-      const json = await res.json();
-      return json.data as ChatMessage;
+      const data = await graphqlRequest<{ editChatMessage: ChatMessage }>(
+        EDIT_CHAT_MESSAGE_MUTATION,
+        {
+          input: {
+            conversationId: dto.conversationId,
+            messageId: dto.messageId,
+            content: dto.content,
+          },
+        }
+      );
+      return data.editChatMessage;
     },
     onSuccess: (updated) => {
       queryClient.setQueryData<PaginatedMessagesResponseDto>(
@@ -155,20 +146,16 @@ export function useChatMutations() {
 
   const deleteMessageMutation = useMutation({
     mutationFn: async (dto: DeleteMessageDto) => {
-      const headers = await getHeaders();
-      const res = await fetch(`/api/chat/messages/${dto.messageId}`, {
-        method: 'DELETE',
-        headers,
-        body: JSON.stringify(dto),
-      });
-
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.message || 'Failed to delete message');
-      }
-
-      const json = await res.json();
-      return json.data as ChatMessage;
+      const data = await graphqlRequest<{ deleteChatMessage: ChatMessage }>(
+        DELETE_CHAT_MESSAGE_MUTATION,
+        {
+          input: {
+            conversationId: dto.conversationId,
+            messageId: dto.messageId,
+          },
+        }
+      );
+      return data.deleteChatMessage;
     },
     onSuccess: (deleted) => {
       queryClient.setQueryData<PaginatedMessagesResponseDto>(
@@ -177,11 +164,7 @@ export function useChatMutations() {
           if (!old) return old;
           return {
             ...old,
-            messages: old.messages.map((m) =>
-              m.id === deleted.id
-                ? { ...m, content: 'This message was deleted', deletedForEveryone: true }
-                : m
-            ),
+            messages: old.messages.filter((m) => m.id !== deleted.id),
           };
         }
       );
@@ -190,17 +173,11 @@ export function useChatMutations() {
 
   const endConversationMutation = useMutation({
     mutationFn: async (conversationId: string) => {
-      const headers = await getHeaders();
-      const res = await fetch(`/api/chat/conversations/${conversationId}/end`, {
-        method: 'POST',
-        headers,
-      });
-
-      if (!res.ok) {
-        throw new Error('Failed to end conversation');
-      }
-      const json = await res.json();
-      return json.data as Conversation;
+      const data = await graphqlRequest<{ endConversation: Conversation }>(
+        END_CONVERSATION_MUTATION,
+        { id: conversationId }
+      );
+      return data.endConversation;
     },
     onSuccess: (updatedConv) => {
       queryClient.setQueryData<Conversation[]>(['conversations', user?.email], (old) => {
@@ -218,18 +195,14 @@ export function useChatMutations() {
       conversationId: string;
       dto: ReopenConversationDto;
     }) => {
-      const headers = await getHeaders();
-      const res = await fetch(`/api/chat/conversations/${conversationId}/reopen`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(dto),
-      });
-
-      if (!res.ok) {
-        throw new Error('Failed to reopen conversation');
-      }
-      const json = await res.json();
-      return json.data as Conversation;
+      const data = await graphqlRequest<{ reopenConversation: Conversation }>(
+        REOPEN_CONVERSATION_MUTATION,
+        {
+          id: conversationId,
+          ...(dto?.workspaceName ? { input: { workspaceName: dto.workspaceName } } : {}),
+        }
+      );
+      return data.reopenConversation;
     },
     onSuccess: (updatedConv) => {
       queryClient.setQueryData<Conversation[]>(['conversations', user?.email], (old) => {
@@ -241,17 +214,11 @@ export function useChatMutations() {
 
   const deleteChatViewMutation = useMutation({
     mutationFn: async (conversationId: string) => {
-      const headers = await getHeaders();
-      const res = await fetch(`/api/chat/conversations/${conversationId}`, {
-        method: 'DELETE',
-        headers,
-      });
-
-      if (!res.ok) {
-        throw new Error('Failed to delete chat view');
-      }
-      const json = await res.json();
-      return json.data as Conversation;
+      const data = await graphqlRequest<{ deleteConversationView: Conversation }>(
+        DELETE_CONVERSATION_VIEW_MUTATION,
+        { id: conversationId }
+      );
+      return data.deleteConversationView;
     },
     onSuccess: (updatedConv, conversationId) => {
       queryClient.setQueryData<PaginatedMessagesResponseDto>(
@@ -264,11 +231,10 @@ export function useChatMutations() {
 
   const markReadMutation = useMutation({
     mutationFn: async (conversationId: string) => {
-      const headers = await getHeaders();
-      await fetch(`/api/chat/conversations/${conversationId}/read`, {
-        method: 'POST',
-        headers,
-      });
+      await graphqlRequest<{ markConversationRead: boolean }>(
+        MARK_CONVERSATION_READ_MUTATION,
+        { id: conversationId }
+      );
     },
     onSuccess: (_, conversationId) => {
       queryClient.setQueryData<Conversation[]>(['conversations', user?.email], (old) => {

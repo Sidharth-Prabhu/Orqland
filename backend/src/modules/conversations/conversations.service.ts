@@ -4,6 +4,7 @@ import {
   NotFoundException,
   ForbiddenException,
   BadRequestException,
+  HttpException,
   InternalServerErrorException,
   Inject,
   Optional,
@@ -26,7 +27,8 @@ import {
   InitiateConversationDto,
   ReopenConversationDto,
 } from '@orqland/contracts';
-import { eq, and, desc, sql, or } from 'drizzle-orm';
+import { eq, and, desc, sql, or, SQL } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -202,10 +204,19 @@ export class ConversationsService {
   /**
    * List all conversations for the authenticated user (client or workspace owner)
    */
-  async listUserConversations(user: InternalUser): Promise<Conversation[]> {
+  async listUserConversations(user: InternalUser, orqspaceId?: string): Promise<Conversation[]> {
     if (this.dbService.isDbConnected()) {
       try {
         const db = this.dbService.getDb();
+        const owner = alias(orqUsers, 'owner');
+
+        const membershipCondition = or(
+          eq(chatConversations.clientUserId, user.id),
+          eq(orqspaces.ownerId, user.id)
+        );
+        const whereClause = orqspaceId
+          ? and(membershipCondition, eq(chatConversations.orqspaceId, orqspaceId))
+          : membershipCondition;
 
         // Multi-tenant resolution: conversations where user is client OR owner of workspace
         const convRows = await db
@@ -213,16 +224,13 @@ export class ConversationsService {
             conv: chatConversations,
             client: orqUsers,
             space: orqspaces,
+            owner,
           })
           .from(chatConversations)
           .innerJoin(orqUsers, eq(chatConversations.clientUserId, orqUsers.id))
           .innerJoin(orqspaces, eq(chatConversations.orqspaceId, orqspaces.id))
-          .where(
-            or(
-              eq(chatConversations.clientUserId, user.id),
-              eq(orqspaces.ownerId, user.id)
-            )
-          )
+          .leftJoin(owner, eq(orqspaces.ownerId, owner.id))
+          .where(whereClause)
           .orderBy(desc(chatConversations.lastMessageAt));
 
         const result: Conversation[] = [];
@@ -230,10 +238,13 @@ export class ConversationsService {
         for (const row of convRows) {
           const c = row.conv;
           const isOwner = row.space.ownerId === user.id;
-          const otherUserId = isOwner ? row.client.id : row.space.id;
+          const ownerEmail = row.owner?.email || '';
+          const otherUserId = isOwner ? row.client.id : row.space.ownerId;
           const otherUserName = isOwner ? row.client.displayName || 'Client' : row.space.name;
-          const otherUserEmail = isOwner ? row.client.email || '' : '';
-          const otherAvatar = isOwner ? row.client.avatar || '' : row.space.logoUrl || '';
+          const otherUserEmail = isOwner ? row.client.email || '' : ownerEmail;
+          const otherAvatar = isOwner
+            ? row.client.avatar || ''
+            : row.space.logoUrl || row.owner?.avatar || '';
 
           const isOtherOnline = await this.presenceService.isOnline(otherUserId);
           const lastMsgTimestamp = c.lastMessageAt ? c.lastMessageAt.getTime() : c.createdAt.getTime();
@@ -241,14 +252,15 @@ export class ConversationsService {
 
           result.push({
             id: c.id,
+            orqspaceId: row.space.id,
             clientId: row.client.id,
             clientEmail: row.client.email || '',
             clientName: row.client.displayName || 'Client',
             clientAvatar: row.client.avatar || '',
-            businessId: row.space.id,
-            businessEmail: row.space.name,
+            businessId: row.space.ownerId,
+            businessEmail: ownerEmail,
             businessName: row.space.name,
-            businessAvatar: row.space.logoUrl || '',
+            businessAvatar: row.space.logoUrl || row.owner?.avatar || '',
             participant: {
               id: otherUserId,
               name: otherUserName,
@@ -262,7 +274,9 @@ export class ConversationsService {
             endedAt: c.endedAt ? c.endedAt.getTime() : undefined,
             endedBy: c.endedByUserId || undefined,
             deletedForClient: Boolean(c.clientClearedBefore),
+            clientDeletedAt: c.clientClearedBefore ? c.clientClearedBefore.getTime() : undefined,
             deletedByBusiness: Boolean(c.workspaceClearedBefore),
+            businessDeletedAt: c.workspaceClearedBefore ? c.workspaceClearedBefore.getTime() : undefined,
             lastMessage: c.lastMessagePreview || '',
             lastMessageTime: lastMsgTime,
             lastMessageTimestamp: lastMsgTimestamp,
@@ -292,6 +306,9 @@ export class ConversationsService {
     return Promise.all(
       this.inMemoryConversations
         .filter((c) => {
+          if (orqspaceId && c.orqspaceId !== orqspaceId && c.businessId !== orqspaceId) {
+            return false;
+          }
           if (isBiz) {
             return (
               c.businessEmail.toLowerCase() === email ||
@@ -356,42 +373,74 @@ export class ConversationsService {
     clientUser: InternalUser,
     dto: InitiateConversationDto
   ): Promise<Conversation> {
-    const bizTarget = (dto.businessEmail || (dto as any).businessId || '').trim();
-    let targetWorkspaceId = (dto as any).businessId;
+    const targetWorkspaceId = (dto.businessId || '').trim();
+    const emailTarget = (dto.businessEmail || '').trim().toLowerCase();
+    const bizTarget = (dto.businessEmail || dto.businessId || '').trim();
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
     if (this.dbService.isDbConnected()) {
       try {
         const db = this.dbService.getDb();
 
-        // 1. Resolve workspace from orqspaces
-        let spaceRows = await db
-          .select()
-          .from(orqspaces)
-          .where(
-            or(
-              eq(orqspaces.id, targetWorkspaceId || crypto.randomUUID()),
-              eq(orqspaces.orqspaceCode, bizTarget)
-            )
-          )
-          .limit(1);
+        // 1. Resolve workspace from orqspaces by UUID, orqspaceCode, or owner email
+        const conditions: SQL[] = [];
+        if (uuidRegex.test(targetWorkspaceId)) {
+          conditions.push(eq(orqspaces.id, targetWorkspaceId));
+        }
+        if (bizTarget) {
+          conditions.push(eq(orqspaces.orqspaceCode, bizTarget));
+        }
 
-        if (spaceRows.length === 0) {
-          // Check if any workspace exists, or create a default orqspace for this business
-          const allSpaces = await db.select().from(orqspaces).limit(1);
-          if (allSpaces.length > 0) {
-            spaceRows = allSpaces;
-          } else {
-            const newSpaceId = targetWorkspaceId || crypto.randomUUID();
+        let spaceRows =
+          conditions.length > 0
+            ? await db
+                .select()
+                .from(orqspaces)
+                .where(or(...conditions))
+                .limit(1)
+            : [];
+
+        const lookupEmail = emailTarget || (bizTarget.includes('@') ? bizTarget.toLowerCase() : '');
+        if (spaceRows.length === 0 && lookupEmail) {
+          const ownerUsers = await db
+            .select()
+            .from(orqUsers)
+            .where(eq(orqUsers.email, lookupEmail))
+            .limit(1);
+
+          if (ownerUsers.length > 0) {
+            spaceRows = await db
+              .select()
+              .from(orqspaces)
+              .where(eq(orqspaces.ownerId, ownerUsers[0].id))
+              .limit(1);
+          }
+
+          if (spaceRows.length === 0) {
+            const ownerUser = await this.authService.resolveOrCreateUser({
+              uid: `owner-${lookupEmail}`,
+              email: lookupEmail,
+              name: dto.businessName || lookupEmail.split('@')[0],
+              picture: dto.businessAvatar,
+            });
+            const newSpaceId = uuidRegex.test(targetWorkspaceId)
+              ? targetWorkspaceId
+              : crypto.randomUUID();
+            const generatedCode = `WS#${crypto.randomBytes(3).toString('hex').toUpperCase()}`.slice(0, 14);
             await db.insert(orqspaces).values({
               id: newSpaceId,
-              orqspaceCode: 'WS#ALPHA#01',
-              name: dto.businessName || 'Alpha Strategic Workspace',
+              orqspaceCode: generatedCode,
+              name: dto.workspaceName || dto.businessName || `${ownerUser.name} Workspace`,
               logoUrl: dto.businessAvatar || '',
-              ownerId: clientUser.id,
+              ownerId: ownerUser.id,
               isActive: true,
             });
             spaceRows = await db.select().from(orqspaces).where(eq(orqspaces.id, newSpaceId)).limit(1);
           }
+        }
+
+        if (spaceRows.length === 0) {
+          throw new NotFoundException('Target business workspace not found.');
         }
 
         const space = spaceRows[0];
@@ -441,26 +490,47 @@ export class ConversationsService {
 
         return this.getConversation(newConvId, clientUser);
       } catch (err) {
+        if (err instanceof HttpException) {
+          throw err;
+        }
         this.logger.error('Failed to initiate conversation in DB:', err);
         throw new InternalServerErrorException('Database failure while initiating conversation. Failed closed.');
       }
     }
 
     // In-memory fallback
-    const targetBusiness = await this.authService.findUserByEmail(bizTarget) || {
-      id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
-      email: 'workspace.alpha@orqland.test',
-      name: 'Alpha Strategic Workspace',
-      avatar: '',
-      handle: '@workspace.alpha',
+    const businesses = (await this.authService.getBusinesses?.()) || [];
+    const matchedSpace = businesses.find(
+      (b) =>
+        b.id === targetWorkspaceId ||
+        b.wsid === bizTarget ||
+        (emailTarget && b.email.toLowerCase() === emailTarget) ||
+        b.email.toLowerCase() === bizTarget.toLowerCase()
+    );
+
+    const lookupEmail = matchedSpace?.email || emailTarget || bizTarget;
+    const foundBusiness = lookupEmail ? await this.authService.findUserByEmail(lookupEmail) : null;
+    if (!matchedSpace && !foundBusiness && !emailTarget && !bizTarget.includes('@')) {
+      throw new NotFoundException('Target business workspace not found.');
+    }
+
+    const targetBusiness = foundBusiness || {
+      id: matchedSpace?.ownerId || crypto.randomUUID(),
+      email: (matchedSpace?.email || emailTarget || bizTarget).toLowerCase(),
+      name: dto.businessName || matchedSpace?.name || (emailTarget || bizTarget).split('@')[0],
+      avatar: dto.businessAvatar || matchedSpace?.avatar || '',
+      handle: `@${(matchedSpace?.email || emailTarget || bizTarget).split('@')[0]}`,
       role: 'business' as const,
-      firebaseUid: 'dev-workspace-alpha',
+      firebaseUid: `dev-${matchedSpace?.id || bizTarget}`,
     };
+    const resolvedOrqspaceId = matchedSpace?.id || targetWorkspaceId || targetBusiness.id;
 
     const existingMemory = this.inMemoryConversations.find(
       (c) =>
         (c.clientId === clientUser.id || c.clientEmail.toLowerCase() === clientUser.email.toLowerCase()) &&
-        (c.businessId === targetBusiness.id || c.businessEmail.toLowerCase() === targetBusiness.email.toLowerCase())
+        (c.orqspaceId === resolvedOrqspaceId ||
+          c.businessId === targetBusiness.id ||
+          c.businessEmail.toLowerCase() === targetBusiness.email.toLowerCase())
     );
 
     if (existingMemory) {
@@ -479,19 +549,20 @@ export class ConversationsService {
 
     const newConv: Conversation = {
       id: newId,
+      orqspaceId: resolvedOrqspaceId,
       clientId: clientUser.id,
       clientEmail: clientUser.email,
       clientName: clientUser.name,
       clientAvatar: clientUser.avatar,
       businessId: targetBusiness.id,
       businessEmail: targetBusiness.email,
-      businessName: targetBusiness.name,
-      businessAvatar: targetBusiness.avatar,
+      businessName: matchedSpace?.name || targetBusiness.name,
+      businessAvatar: matchedSpace?.avatar || targetBusiness.avatar,
       participant: {
         id: targetBusiness.id,
-        name: targetBusiness.name,
+        name: matchedSpace?.name || targetBusiness.name,
         email: targetBusiness.email,
-        avatar: targetBusiness.avatar,
+        avatar: matchedSpace?.avatar || targetBusiness.avatar,
         handle: targetBusiness.handle,
         isOnline: true,
         role: 'business',
@@ -652,12 +723,21 @@ export class ConversationsService {
         const db = this.dbService.getDb();
         await db
           .update(chatConversations)
-          .set(
-            isClient
-              ? { clientClearedBefore: now, updatedAt: now }
-              : { workspaceClearedBefore: now, updatedAt: now }
-          )
+          .set({
+            clientClearedBefore: now,
+            workspaceClearedBefore: now,
+            lastMessagePreview: '',
+            updatedAt: now,
+          })
           .where(eq(chatConversations.id, conversationId));
+
+        await db
+          .update(chatMessages)
+          .set({
+            deletedForEveryone: true,
+            deletedAt: now,
+          })
+          .where(eq(chatMessages.conversationId, conversationId));
 
         return this.getConversation(conversationId, user);
       } catch (err) {

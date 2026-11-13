@@ -4,7 +4,7 @@ import { orqUsers, orqspaces } from '../../infrastructure/database/schema';
 import { DecodedAuthToken } from './firebase-admin.service';
 import { eq } from 'drizzle-orm';
 import * as crypto from 'crypto';
-import { INITIAL_BUSINESSES, BusinessDirectoryItem } from '@orqland/contracts';
+import { BusinessDirectoryItem } from '@orqland/contracts';
 
 export interface InternalUser {
   id: string; // internal ORQLAND UUID matching orq_users.id
@@ -22,15 +22,16 @@ export interface InternalUser {
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
   private inMemoryUsers = new Map<string, InternalUser>();
-  private businessDirectory: BusinessDirectoryItem[] = [...INITIAL_BUSINESSES];
+  private inMemoryWorkspaces: BusinessDirectoryItem[] = [];
 
   constructor(private readonly dbService: DatabaseService) {
-    this.seedDefaultUsers();
+    if (process.env.NODE_ENV === 'test') {
+      this.seedTestFixtures();
+    }
   }
 
-  private seedDefaultUsers() {
-    // Seed neutral test users
-    const defaultUsers: InternalUser[] = [
+  private seedTestFixtures() {
+    const testUsers: InternalUser[] = [
       {
         id: '11111111-1111-1111-1111-111111111111',
         firebaseUid: 'dev-client-1',
@@ -71,50 +72,83 @@ export class AuthService {
         wsid: 'WS#BETA#02',
         businessStatus: 'Open',
       },
-      {
-        id: 'a0000000-0000-0000-0000-000000000001',
-        firebaseUid: 'biz-mailtosidharth.me@gmail.com',
-        email: 'mailtosidharth.me@gmail.com',
-        name: 'Sidharth Prabhu',
-        handle: '@sidharth',
-        avatar: 'https://lh3.googleusercontent.com/a/ACg8ocK77osqTQ76zfsDwgj5r5kQZiKsBHRgjI-1NqrM62sChRVilDG5dA=s96-c',
-        role: 'business',
-        wsid: 'WS#ALPHA#01',
-        businessStatus: 'Open',
-      },
     ];
 
-    for (const u of defaultUsers) {
+    for (const u of testUsers) {
       this.inMemoryUsers.set(u.email.toLowerCase(), u);
       this.inMemoryUsers.set(u.id, u);
       this.inMemoryUsers.set(u.firebaseUid, u);
     }
 
-    // Seed all directory businesses as in-memory users
-    for (const biz of this.businessDirectory) {
-      const bizUser: InternalUser = {
-        id: biz.id,
-        firebaseUid: `biz-${biz.id}`,
-        email: biz.email.toLowerCase(),
-        name: biz.name,
-        handle: `@${biz.email.split('@')[0]}`,
-        avatar: biz.avatar,
-        role: 'business',
-        wsid: biz.wsid,
-        businessStatus: biz.status,
-      };
-      this.inMemoryUsers.set(bizUser.email.toLowerCase(), bizUser);
-      this.inMemoryUsers.set(bizUser.id, bizUser);
-      this.inMemoryUsers.set(bizUser.firebaseUid, bizUser);
-    }
+    this.inMemoryWorkspaces = [
+      {
+        id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+        ownerId: '33333333-3333-3333-3333-333333333333',
+        name: 'Alpha Design & Engineering',
+        email: 'owner.alpha@orqland.test',
+        category: 'Workspace',
+        description: 'Workspace WS#ALPHA#01',
+        avatar: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=128&h=128&fit=crop',
+        wsid: 'WS#ALPHA#01',
+        isOnline: true,
+        status: 'Open',
+        verified: true,
+        services: ['General Consultation'],
+      },
+      {
+        id: 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
+        ownerId: '44444444-4444-4444-4444-444444444444',
+        name: 'Beta Cloud Architecture',
+        email: 'owner.beta@orqland.test',
+        category: 'Workspace',
+        description: 'Workspace WS#BETA#02',
+        avatar: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=128&h=128&fit=crop',
+        wsid: 'WS#BETA#02',
+        isOnline: true,
+        status: 'Open',
+        verified: true,
+        services: ['General Consultation'],
+      },
+    ];
   }
 
-  getBusinesses(): BusinessDirectoryItem[] {
-    return this.businessDirectory;
+  async getBusinesses(): Promise<BusinessDirectoryItem[]> {
+    if (this.dbService.isDbConnected()) {
+      try {
+        const db = this.dbService.getDb();
+        const rows = await db
+          .select({
+            space: orqspaces,
+            owner: orqUsers,
+          })
+          .from(orqspaces)
+          .innerJoin(orqUsers, eq(orqspaces.ownerId, orqUsers.id));
+
+        return rows.map(({ space, owner }) => ({
+          id: space.id,
+          ownerId: space.ownerId,
+          name: space.name,
+          email: owner.email || '',
+          category: 'Workspace',
+          description: `Workspace ${space.orqspaceCode}`,
+          avatar: space.logoUrl || owner.avatar || '',
+          wsid: space.orqspaceCode,
+          isOnline: true,
+          status: space.isActive ? 'Open' : 'Closed',
+          verified: true,
+          services: ['General Consultation'],
+        }));
+      } catch (err) {
+        this.logger.error('Failed to query orqspaces directory from DB:', err);
+      }
+    }
+    return this.inMemoryWorkspaces;
   }
 
   isBusinessEmail(email: string): boolean {
     const clean = (email || '').trim().toLowerCase();
+    if (!clean) return false;
+
     const envBusinesses = (process.env.BUSINESS_EMAILS || process.env.BUSINESS_EMAIL || '')
       .toLowerCase()
       .split(',')
@@ -122,9 +156,36 @@ export class AuthService {
       .filter(Boolean);
 
     if (envBusinesses.includes(clean)) return true;
-    if (clean === 'mailtosidharth.me@gmail.com') return true;
 
-    return this.businessDirectory.some((b) => b.email.toLowerCase() === clean);
+    return this.inMemoryWorkspaces.some((b) => b.email.toLowerCase() === clean);
+  }
+
+  private async buildUserFromDb(
+    u: { id: string; email: string | null; displayName: string | null; avatar: string | null },
+    firebaseUid: string,
+    fallbackName?: string,
+    fallbackAvatar?: string
+  ): Promise<InternalUser> {
+    const db = this.dbService.getDb();
+    const ownedSpaces = await db
+      .select()
+      .from(orqspaces)
+      .where(eq(orqspaces.ownerId, u.id));
+
+    const userEmail = (u.email || '').toLowerCase();
+    const isBiz = ownedSpaces.length > 0 || this.isBusinessEmail(userEmail);
+
+    return {
+      id: u.id,
+      firebaseUid,
+      email: userEmail,
+      name: u.displayName || fallbackName || userEmail.split('@')[0] || 'User',
+      handle: `@${(userEmail || u.id).split('@')[0]}`,
+      avatar: u.avatar || fallbackAvatar || '',
+      role: isBiz ? 'business' : 'client',
+      wsid: ownedSpaces[0]?.orqspaceCode,
+      businessStatus: ownedSpaces[0] ? (ownedSpaces[0].isActive ? 'Open' : 'Closed') : 'Open',
+    };
   }
 
   /**
@@ -137,7 +198,6 @@ export class AuthService {
     const name = decoded.name?.trim() || email.split('@')[0] || 'User';
     const avatar = decoded.picture || '';
 
-    // Dynamic Business identity rule
     const role: 'client' | 'business' = this.isBusinessEmail(email) ? 'business' : 'client';
 
     if (this.dbService.isDbConnected()) {
@@ -152,29 +212,31 @@ export class AuthService {
           .limit(1);
 
         if (existingList.length > 0) {
-          const u = existingList[0];
-          return {
-            id: u.id,
-            firebaseUid,
-            email: u.email || email,
-            name: u.displayName || name,
-            handle: `@${(u.email || email).split('@')[0]}`,
-            avatar: u.avatar || avatar,
-            role,
-            wsid: role === 'business' ? 'WS#ALPHA#01' : undefined,
-            businessStatus: 'Open',
-          };
+          return this.buildUserFromDb(existingList[0], firebaseUid, name, avatar);
         }
 
-        // 2. First-time registration -> Insert new user into orq_users
+        // 2. First-time registration -> Idempotent insert in case concurrent requests race
         const newUserId = crypto.randomUUID();
-        await db.insert(orqUsers).values({
-          id: newUserId,
-          displayName: name,
-          email,
-          avatar,
-          isActive: true,
-        });
+        await db
+          .insert(orqUsers)
+          .values({
+            id: newUserId,
+            displayName: name,
+            email,
+            avatar,
+            isActive: true,
+          })
+          .onConflictDoNothing({ target: orqUsers.email });
+
+        const insertedOrExisting = await db
+          .select()
+          .from(orqUsers)
+          .where(eq(orqUsers.email, email))
+          .limit(1);
+
+        if (insertedOrExisting.length > 0) {
+          return this.buildUserFromDb(insertedOrExisting[0], firebaseUid, name, avatar);
+        }
 
         return {
           id: newUserId,
@@ -184,7 +246,7 @@ export class AuthService {
           handle: `@${email.split('@')[0]}`,
           avatar,
           role,
-          wsid: role === 'business' ? 'WS#ALPHA#01' : undefined,
+          wsid: undefined,
           businessStatus: 'Open',
         };
       } catch (err) {
@@ -192,7 +254,7 @@ export class AuthService {
       }
     }
 
-    // In-Memory Fallback for development without PostgreSQL
+    // In-Memory Fallback for tests / no-DB mode
     let user =
       this.inMemoryUsers.get(firebaseUid) ||
       this.inMemoryUsers.get(email.toLowerCase()) ||
@@ -200,6 +262,7 @@ export class AuthService {
 
     if (!user) {
       const newId = crypto.randomUUID();
+      const ownedTestSpace = this.inMemoryWorkspaces.find((w) => w.email.toLowerCase() === email);
       user = {
         id: newId,
         firebaseUid,
@@ -207,8 +270,8 @@ export class AuthService {
         name,
         handle: `@${email.split('@')[0]}`,
         avatar,
-        role,
-        wsid: role === 'business' ? 'WS#ALPHA#01' : undefined,
+        role: ownedTestSpace ? 'business' : role,
+        wsid: ownedTestSpace?.wsid,
         businessStatus: 'Open',
       };
       this.inMemoryUsers.set(newId, user);
@@ -228,19 +291,7 @@ export class AuthService {
         const db = this.dbService.getDb();
         const rows = await db.select().from(orqUsers).where(eq(orqUsers.id, id)).limit(1);
         if (rows.length > 0) {
-          const u = rows[0];
-          const isBiz = this.isBusinessEmail(u.email || '');
-          return {
-            id: u.id,
-            firebaseUid: `user-${u.id}`,
-            email: u.email || '',
-            name: u.displayName || '',
-            handle: `@${(u.email || '').split('@')[0]}`,
-            avatar: u.avatar || '',
-            role: isBiz ? 'business' : 'client',
-            wsid: isBiz ? 'WS#ALPHA#01' : undefined,
-            businessStatus: 'Open',
-          };
+          return this.buildUserFromDb(rows[0], `user-${rows[0].id}`);
         }
       } catch (err) {
         this.logger.error('Database findUserById failed:', err);
@@ -256,19 +307,7 @@ export class AuthService {
         const db = this.dbService.getDb();
         const rows = await db.select().from(orqUsers).where(eq(orqUsers.email, clean)).limit(1);
         if (rows.length > 0) {
-          const u = rows[0];
-          const isBiz = this.isBusinessEmail(u.email || '');
-          return {
-            id: u.id,
-            firebaseUid: `user-${u.id}`,
-            email: u.email || clean,
-            name: u.displayName || '',
-            handle: `@${(u.email || clean).split('@')[0]}`,
-            avatar: u.avatar || '',
-            role: isBiz ? 'business' : 'client',
-            wsid: isBiz ? 'WS#ALPHA#01' : undefined,
-            businessStatus: 'Open',
-          };
+          return this.buildUserFromDb(rows[0], `user-${rows[0].id}`);
         }
       } catch (err) {
         this.logger.error('Database findUserByEmail failed:', err);

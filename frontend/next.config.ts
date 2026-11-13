@@ -52,6 +52,18 @@ const nextConfig: NextConfig = {
       },
     ],
   },
+  async rewrites() {
+    const nestBase = (
+      process.env.NEST_BASE_URL ||
+      (process.env.NEST_API_URL ? process.env.NEST_API_URL.replace(/\/api(\/v1)?\/?$/, '') : 'http://localhost:3002')
+    ).replace(/\/$/, '');
+    return [
+      {
+        source: '/api/v1/:path*',
+        destination: `${nestBase}/api/v1/:path*`,
+      },
+    ];
+  },
   turbopack: {
     rules: {
       "*.css": {

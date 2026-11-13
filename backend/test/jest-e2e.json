@@ -3,11 +3,10 @@
   "rootDir": ".",
   "testRegex": ".e2e-spec.ts$",
   "transform": {
-    "^.+\\.(t|j)sx?$": "ts-jest"
+    "^.+\\.(t|j)sx?$": "<rootDir>/cjs-transformer.js"
   },
-  "moduleNameMapper": {
-    "^@nestjs/graphql$": "<rootDir>/graphql.mock.js",
-    "^@nestjs/apollo$": "<rootDir>/apollo.mock.js"
-  },
+  "transformIgnorePatterns": [
+    "node_modules/(?!.*(?:@nestjs[+/](?:graphql|apollo|mapped-types)|@apollo[+/]|@as-integrations[+/]|@graphql-tools[+/]))"
+  ],
   "testEnvironment": "node"
 }

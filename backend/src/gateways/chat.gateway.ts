@@ -199,28 +199,78 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   /**
-   * Broadcast message edit to conversation room
+   * Broadcast message edit to conversation room AND participants' direct user rooms
    */
-  broadcastMessageEdited(conversationId: string, editedMessage: ChatMessage) {
-    this.server.to(`conversation:${conversationId}`).emit(CHAT_EVENTS.MESSAGE_EDITED, {
+  async broadcastMessageEdited(
+    conversationId: string,
+    editedMessage: ChatMessage,
+    sender?: InternalUser,
+    clientMessageId?: string
+  ) {
+    const payload = {
       conversationId,
       messageId: editedMessage.id,
+      clientMessageId: clientMessageId || editedMessage.idempotencyKey,
       content: editedMessage.content,
       isEdited: true,
       editedAt: editedMessage.editedAt || Date.now(),
-    });
+    };
+    this.server.to(`conversation:${conversationId}`).emit(CHAT_EVENTS.MESSAGE_EDITED, payload);
+
+    try {
+      if (sender) {
+        const conv = await this.conversationsService.getConversation(conversationId, sender);
+        const otherParticipantId = conv.clientId === sender.id ? conv.businessId : conv.clientId;
+        const otherParticipantEmail = conv.clientId === sender.id ? conv.businessEmail : conv.clientEmail;
+        if (otherParticipantId) {
+          this.server.to(`user:${otherParticipantId}`).emit(CHAT_EVENTS.MESSAGE_EDITED, payload);
+        }
+        if (otherParticipantEmail) {
+          this.server.to(`user:email:${otherParticipantEmail.toLowerCase()}`).emit(CHAT_EVENTS.MESSAGE_EDITED, payload);
+        }
+        this.server.to(`user:${sender.id}`).emit(CHAT_EVENTS.MESSAGE_EDITED, payload);
+        if (sender.email) {
+          this.server.to(`user:email:${sender.email.toLowerCase()}`).emit(CHAT_EVENTS.MESSAGE_EDITED, payload);
+        }
+      }
+    } catch {}
   }
 
   /**
-   * Broadcast message deletion to conversation room
+   * Broadcast message deletion to conversation room AND participants' direct user rooms
    */
-  broadcastMessageDeleted(conversationId: string, messageId: string) {
-    this.server.to(`conversation:${conversationId}`).emit(CHAT_EVENTS.MESSAGE_DELETED, {
+  async broadcastMessageDeleted(
+    conversationId: string,
+    messageId: string,
+    sender?: InternalUser,
+    clientMessageId?: string
+  ) {
+    const payload = {
       conversationId,
       messageId,
+      clientMessageId,
       deletedForEveryone: true,
       deletedAt: Date.now(),
-    });
+    };
+    this.server.to(`conversation:${conversationId}`).emit(CHAT_EVENTS.MESSAGE_DELETED, payload);
+
+    try {
+      if (sender) {
+        const conv = await this.conversationsService.getConversation(conversationId, sender);
+        const otherParticipantId = conv.clientId === sender.id ? conv.businessId : conv.clientId;
+        const otherParticipantEmail = conv.clientId === sender.id ? conv.businessEmail : conv.clientEmail;
+        if (otherParticipantId) {
+          this.server.to(`user:${otherParticipantId}`).emit(CHAT_EVENTS.MESSAGE_DELETED, payload);
+        }
+        if (otherParticipantEmail) {
+          this.server.to(`user:email:${otherParticipantEmail.toLowerCase()}`).emit(CHAT_EVENTS.MESSAGE_DELETED, payload);
+        }
+        this.server.to(`user:${sender.id}`).emit(CHAT_EVENTS.MESSAGE_DELETED, payload);
+        if (sender.email) {
+          this.server.to(`user:email:${sender.email.toLowerCase()}`).emit(CHAT_EVENTS.MESSAGE_DELETED, payload);
+        }
+      }
+    } catch {}
   }
 
   /**

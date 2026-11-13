@@ -38,16 +38,9 @@ async function uploadToStorageGateway(
       if (token) {
         headers['Authorization'] = `Bearer ${token}`;
       }
-      if (currentUser.email) {
-        headers['X-User-Email'] = currentUser.email;
-      }
-    } else if (userEmail) {
-      headers['X-User-Email'] = userEmail;
     }
   } catch {
-    if (userEmail) {
-      headers['X-User-Email'] = userEmail;
-    }
+    // ignore token lookup error
   }
 
   const reqRes = await fetch('/api/chat/attachments/upload-url', {
@@ -58,7 +51,6 @@ async function uploadToStorageGateway(
       fileName: file.name,
       mimeType: file.type || 'application/octet-stream',
       size: file.size,
-      userEmail: userEmail || auth.currentUser?.email || undefined,
     }),
   });
 
@@ -152,7 +144,7 @@ async function uploadDirectToFirebase(
   })();
 
   const timeoutPromise = new Promise<never>((_, reject) =>
-    setTimeout(() => reject(new Error('Firebase upload timed out after 15s')), 15000)
+    setTimeout(() => reject(new Error('Firebase upload timed out after 30s')), 30000)
   );
 
   return Promise.race([uploadPromise, timeoutPromise]);
@@ -160,8 +152,8 @@ async function uploadDirectToFirebase(
 
 /**
  * Primary Robust & High-Speed Upload Entry Point
- * Always requests a signed upload URL via /api/chat/attachments/upload-url (V4 signed URL or storage gateway)
- * and uploads the raw binary file. Never falls back to inline base64 string stuffing.
+ * 1. Primary: Direct Firebase Cloud Storage Upload (Official Google Cloud Storage bucket)
+ * 2. Secondary Failover: Backend Signed URL Storage Gateway (for offline/dev environments)
  */
 export async function uploadFileToFirebaseStorage(
   file: File,
@@ -169,21 +161,22 @@ export async function uploadFileToFirebaseStorage(
   userEmail?: string,
   onProgress?: (progressPercent: number) => void
 ): Promise<UploadResult> {
-  // 1. Primary: Backend Signed URL Storage Gateway (V4 signed upload URL)
+  // 1. Primary: Ultra-fast direct Firebase Cloud Storage
   try {
-    return await uploadToStorageGateway(file, conversationId, userEmail, onProgress);
-  } catch (gatewayErr) {
+    const res = await uploadDirectToFirebase(file, conversationId, onProgress);
+    return res;
+  } catch (firebaseErr) {
     console.warn(
-      'Storage gateway signed upload failed; attempting direct Firebase Cloud Storage upload:',
-      gatewayErr
+      'Direct Firebase Storage upload encountered an issue; falling back to storage gateway:',
+      firebaseErr
     );
   }
 
-  // 2. Secondary: Direct Firebase Storage (if client SDK configured with direct permissions)
+  // 2. Secondary: Backend Storage Gateway
   try {
-    return await uploadDirectToFirebase(file, conversationId, onProgress);
-  } catch (firebaseErr) {
-    console.error('All storage upload strategies failed:', firebaseErr);
+    return await uploadToStorageGateway(file, conversationId, userEmail, onProgress);
+  } catch (gatewayErr) {
+    console.error('All storage upload strategies failed:', gatewayErr);
     throw new Error('Failed to upload attachment. Please check file size and network connection.');
   }
 }

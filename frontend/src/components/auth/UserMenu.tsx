@@ -12,7 +12,7 @@ interface UserMenuProps {
 }
 
 export const UserMenu: React.FC<UserMenuProps> = ({ onOpenAuthModal }) => {
-  const { user, signOutUser, isAuthenticating } = useAuth();
+  const { user, backendRole, signOutUser, isAuthenticating } = useAuth();
   const [isOpen, setIsOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -101,7 +101,7 @@ export const UserMenu: React.FC<UserMenuProps> = ({ onOpenAuthModal }) => {
 
             {/* Role Badge */}
             <div className="mt-3 flex items-center gap-1.5 px-2.5 py-1 bg-blue-50/80 border border-blue-100 rounded-lg text-[11px] font-semibold text-blue-700">
-              {isBusinessUser(user.email) ? (
+              {isBusinessUser(user.email, backendRole) ? (
                 <>
                   <Building2 size={13} className="text-blue-600 flex-shrink-0" />
                   <span>Business Workspace Account</span>

@@ -13,13 +13,15 @@ import {
   ChevronRight,
   ChevronDown,
 } from 'lucide-react';
-import { BUSINESS_DIRECTORY, BusinessDirectoryItem } from '@orqland/contracts';
+import { BusinessDirectoryItem } from '@orqland/contracts';
 import { UserAvatar } from '@/components/ui/UserAvatar';
+import { graphqlRequest, CHAT_DIRECTORY_QUERY } from '@/lib/graphql/client';
 
 interface StartChatModalProps {
   isOpen: boolean;
   onClose: () => void;
   onInitiate: (data: {
+    businessId?: string;
     businessEmail: string;
     businessName: string;
     businessAvatar?: string;
@@ -35,7 +37,7 @@ export const StartChatModal: React.FC<StartChatModalProps> = ({
   onInitiate,
   isSubmitting = false,
 }) => {
-  const [businesses, setBusinesses] = useState<BusinessDirectoryItem[]>(BUSINESS_DIRECTORY);
+  const [businesses, setBusinesses] = useState<BusinessDirectoryItem[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedBusiness, setSelectedBusiness] = useState<BusinessDirectoryItem | null>(null);
   const [isCustomEmailMode, setIsCustomEmailMode] = useState(false);
@@ -46,19 +48,56 @@ export const StartChatModal: React.FC<StartChatModalProps> = ({
   const [initialMessage, setInitialMessage] = useState('');
   const [error, setError] = useState<string | null>(null);
 
-  // Fetch dynamic businesses from server if available, falling back to BUSINESS_DIRECTORY
+  // Fetch dynamic businesses from GraphQL chatDirectory (falling back to /api/chat/businesses)
   useEffect(() => {
     if (!isOpen) return;
-    fetch('/api/chat/businesses')
-      .then((res) => res.json())
+    let active = true;
+    graphqlRequest<{
+      chatDirectory: Array<{
+        id: string;
+        orqspaceCode: string;
+        name: string;
+        logoUrl?: string;
+        ownerId: string;
+        isActive: boolean;
+        category?: string;
+        description?: string;
+        email?: string;
+      }>;
+    }>(CHAT_DIRECTORY_QUERY)
       .then((data) => {
-        if (data?.data && Array.isArray(data.data) && data.data.length > 0) {
-          setBusinesses(data.data);
-        }
+        if (!active || !Array.isArray(data?.chatDirectory)) return;
+        const mapped: BusinessDirectoryItem[] = data.chatDirectory.map((space) => ({
+          id: space.id,
+          ownerId: space.ownerId,
+          name: space.name,
+          email: space.email || '',
+          category: space.category || 'Workspace',
+          description: space.description || `Workspace ${space.orqspaceCode}`,
+          avatar: space.logoUrl || '',
+          wsid: space.orqspaceCode,
+          isOnline: true,
+          status: space.isActive ? 'Open' : 'Closed',
+          verified: true,
+          services: ['General Consultation', 'Code Review', 'Technical Architecture'],
+        }));
+        setBusinesses(mapped);
       })
-      .catch(() => {
-        // keep default
-      });
+      .catch(() =>
+        fetch('/api/chat/businesses')
+          .then((res) => res.json())
+          .then((data) => {
+            if (active && data?.data && Array.isArray(data.data)) {
+              setBusinesses(data.data);
+            }
+          })
+          .catch(() => {
+            // keep current state on network failure
+          })
+      );
+    return () => {
+      active = false;
+    };
   }, [isOpen]);
 
   // Available services list based on selected business (or default fallback)
@@ -143,6 +182,7 @@ export const StartChatModal: React.FC<StartChatModalProps> = ({
 
     try {
       await onInitiate({
+        businessId: selectedBusiness?.id,
         businessEmail: targetEmail,
         businessName: targetName,
         businessAvatar: targetAvatar,

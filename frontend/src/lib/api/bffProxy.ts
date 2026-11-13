@@ -1,9 +1,31 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse, connection } from 'next/server';
 
 const NEST_API_BASE =
   process.env.NEST_API_URL ||
   process.env.INTERNAL_API_URL ||
   'http://localhost:3002/api/v1';
+
+/**
+ * Fetch an upstream NestJS endpoint, retrying briefly on transient socket/startup failures.
+ */
+export async function fetchUpstreamWithRetry(
+  url: string,
+  init: RequestInit,
+  maxAttempts = 3
+): Promise<Response> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await fetch(url, init);
+    } catch (err) {
+      lastError = err;
+      if (attempt < maxAttempts) {
+        await new Promise((resolve) => setTimeout(resolve, attempt * 250));
+      }
+    }
+  }
+  throw lastError;
+}
 
 export async function proxyToNest(
   request: NextRequest,
@@ -14,6 +36,7 @@ export async function proxyToNest(
     params?: Record<string, string>;
   }
 ) {
+  await connection();
   try {
     const url = new URL(`${NEST_API_BASE}${nestPath}`);
     if (options?.params) {
@@ -29,22 +52,10 @@ export async function proxyToNest(
       Accept: 'application/json',
     };
 
-    // Forward auth headers
+    // Forward verified Bearer auth header only (never fabricate x-user-email)
     const authHeader = request.headers.get('authorization');
     if (authHeader) {
       headers['authorization'] = authHeader;
-    }
-    const emailHeader = request.headers.get('x-user-email');
-    if (emailHeader) {
-      headers['x-user-email'] = emailHeader;
-    }
-
-    // In dev mode, also check searchParams for email if no auth/email header is present
-    if (!headers['x-user-email'] && !headers['authorization']) {
-      const emailQuery = request.nextUrl.searchParams.get('email') || request.nextUrl.searchParams.get('senderEmail');
-      if (emailQuery) {
-        headers['x-user-email'] = emailQuery;
-      }
     }
 
     const method = options?.method || request.method;
@@ -56,24 +67,7 @@ export async function proxyToNest(
       bodyText = await request.text().catch(() => undefined);
     }
 
-    // If in dev and no auth header, try to extract email from body to provide dev identity fallback
-    if (!headers['authorization'] && !headers['x-user-email'] && bodyText) {
-      try {
-        const parsed = JSON.parse(bodyText);
-        const devEmail =
-          parsed.userEmail ||
-          parsed.clientEmail ||
-          parsed.senderEmail ||
-          parsed.email;
-        if (devEmail) {
-          headers['x-user-email'] = devEmail;
-        }
-      } catch {
-        // ignore invalid JSON
-      }
-    }
-
-    const res = await fetch(url.toString(), {
+    const res = await fetchUpstreamWithRetry(url.toString(), {
       method,
       headers,
       body: bodyText && bodyText.length > 0 ? bodyText : undefined,

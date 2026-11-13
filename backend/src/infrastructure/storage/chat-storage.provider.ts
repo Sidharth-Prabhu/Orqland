@@ -15,6 +15,7 @@ export abstract class ChatStorageProvider {
     fileName: string;
     mimeType: string;
     sizeBytes: number;
+    attachmentId?: string;
   }): Promise<AttachmentPolicyResult>;
 
   abstract deleteObject(storageKey: string): Promise<void>;
@@ -39,6 +40,7 @@ export class SimulatedChatStorageProvider extends ChatStorageProvider {
     fileName: string;
     mimeType: string;
     sizeBytes: number;
+    attachmentId?: string;
   }): Promise<AttachmentPolicyResult> {
     const { conversationId, fileName, mimeType, sizeBytes } = params;
 
@@ -64,7 +66,7 @@ export class SimulatedChatStorageProvider extends ChatStorageProvider {
     }
 
     const sanitizedFileName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
-    const attachmentId = crypto.randomUUID();
+    const attachmentId = params.attachmentId || crypto.randomUUID();
     const storageKey = `chat/${conversationId}/${attachmentId}-${sanitizedFileName}`;
     const expiresAt = new Date(Date.now() + 48 * 60 * 60 * 1000); // 48-hour retention
 
@@ -72,7 +74,7 @@ export class SimulatedChatStorageProvider extends ChatStorageProvider {
       storageKey,
       uploadMode: 'simulated',
       uploadUrl: `/api/v1/chat/attachments/simulate-upload/${attachmentId}`,
-      url: `https://storage.simulated.local/${storageKey}`,
+      url: `/api/v1/chat/attachments/download/${attachmentId}`,
       expiresAt,
     };
   }

@@ -4,6 +4,7 @@ import React, { useState } from 'react';
 import { MapPin, X, Navigation, Loader2, AlertCircle } from 'lucide-react';
 import { ChatAttachment } from '@/types/chat';
 import { ATTACHMENT_RETENTION_MS } from '@/lib/constants';
+import { generateUuid } from '@/lib/uuid';
 
 interface LocationModalProps {
   isOpen: boolean;
@@ -19,7 +20,7 @@ function createLocationAttachment(
   const mapUrl = `https://www.google.com/maps?q=${coords.lat},${coords.lng}`;
 
   return {
-    id: `loc-${now}-${Math.random().toString(36).slice(2, 6)}`,
+    id: generateUuid(),
     type: 'location',
     name: label?.trim() || 'Shared Location',
     url: mapUrl,

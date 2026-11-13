@@ -22,16 +22,20 @@ export class AuthController {
 
   @Get('businesses')
   async getBusinesses() {
-    const businesses = this.authService.getBusinesses();
+    const businesses = await this.authService.getBusinesses();
     return { success: true, data: businesses };
   }
 
   @Post('sync')
-  async syncProfile(@Body() body: { email: string; name?: string; avatar?: string }) {
+  @UseGuards(FirebaseAuthGuard)
+  async syncProfile(
+    @CurrentUser() currentUser: InternalUser,
+    @Body() body: { name?: string; avatar?: string }
+  ) {
     const user = await this.authService.syncUserProfile(
-      body.email,
-      body.name,
-      body.avatar
+      currentUser.email,
+      body?.name,
+      body?.avatar
     );
     return { success: true, user };
   }

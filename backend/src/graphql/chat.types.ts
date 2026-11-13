@@ -294,6 +294,9 @@ export class ConversationGql {
   @Field(() => ID)
   id!: string;
 
+  @Field(() => ID, { nullable: true })
+  orqspaceId?: string;
+
   @Field(() => ID)
   clientId!: string;
 
@@ -393,8 +396,17 @@ export class SignedUploadPolicyGql {
   @Field()
   key!: string;
 
+  @Field({ nullable: true })
+  objectKey?: string;
+
+  @Field({ nullable: true })
+  attachmentId?: string;
+
   @Field(() => Float)
   expiresAt!: number;
+
+  @Field(() => Int, { nullable: true })
+  expiresInSeconds?: number;
 }
 
 @ObjectType()
@@ -408,13 +420,35 @@ export class HeartbeatResultGql {
 
 @InputType()
 export class InitiateConversationInputGql {
-  @Field()
+  @Field({ nullable: true })
+  @IsOptional()
   @IsString()
-  businessId!: string;
+  businessId?: string;
 
-  @Field()
+  @Field({ nullable: true })
+  @IsOptional()
   @IsString()
-  category!: string;
+  businessEmail?: string;
+
+  @Field({ nullable: true })
+  @IsOptional()
+  @IsString()
+  businessName?: string;
+
+  @Field({ nullable: true })
+  @IsOptional()
+  @IsString()
+  businessAvatar?: string;
+
+  @Field({ nullable: true })
+  @IsOptional()
+  @IsString()
+  workspaceName?: string;
+
+  @Field({ nullable: true })
+  @IsOptional()
+  @IsString()
+  category?: string;
 
   @Field({ nullable: true })
   @IsOptional()
@@ -529,6 +563,9 @@ export class OrqspaceGql {
 
   @Field({ nullable: true })
   description?: string;
+
+  @Field({ nullable: true })
+  email?: string;
 }
 
 @InputType()

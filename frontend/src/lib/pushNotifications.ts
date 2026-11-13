@@ -47,7 +47,7 @@ export async function initializePushNotifications(userEmail?: string): Promise<s
 
     if (token) {
       // Register token with backend
-      await registerPushTokenWithBackend(token, userEmail);
+      await registerPushTokenWithBackend(token);
 
       // Listen for foreground notifications
       onMessage(messaging, (payload) => {
@@ -71,7 +71,7 @@ export async function initializePushNotifications(userEmail?: string): Promise<s
   return null;
 }
 
-async function registerPushTokenWithBackend(token: string, userEmail?: string) {
+async function registerPushTokenWithBackend(token: string) {
   try {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
@@ -80,9 +80,6 @@ async function registerPushTokenWithBackend(token: string, userEmail?: string) {
     if (currentUser) {
       const idToken = await currentUser.getIdToken().catch(() => '');
       if (idToken) headers['Authorization'] = `Bearer ${idToken}`;
-      if (currentUser.email) headers['X-User-Email'] = currentUser.email;
-    } else if (userEmail) {
-      headers['X-User-Email'] = userEmail;
     }
 
     await fetch('/api/notifications', {

@@ -51,6 +51,7 @@ describe('ConversationsService', () => {
         }
         return Promise.resolve(clientUser);
       }),
+      getBusinesses: jest.fn().mockResolvedValue([]),
     } as any;
 
     conversationsService = new ConversationsService(dbService, authService, presenceService);

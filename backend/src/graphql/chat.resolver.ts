@@ -1,4 +1,4 @@
-import { Resolver, Query, Mutation, Args, ID, Int, Float } from '@nestjs/graphql';
+import { Resolver, Query, Mutation, Args, ID, Int, Float, ResolveField, Parent } from '@nestjs/graphql';
 import { UseGuards, Inject, forwardRef } from '@nestjs/common';
 import { FirebaseAuthGuard } from '../common/guards/firebase-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -29,7 +29,7 @@ import {
   ClearConversationHistoryInputGql,
 } from './chat.types';
 
-@Resolver()
+@Resolver(() => ConversationGql)
 @UseGuards(FirebaseAuthGuard)
 export class ChatResolver {
   constructor(
@@ -49,16 +49,17 @@ export class ChatResolver {
 
   @Query(() => [OrqspaceGql], { name: 'chatDirectory', description: 'Active workspaces directory' })
   async getChatDirectory(): Promise<any[]> {
-    const list = this.authService.getBusinesses();
+    const list = await this.authService.getBusinesses();
     return list.map((b) => ({
       id: b.id,
       orqspaceCode: b.wsid,
       name: b.name,
       logoUrl: b.avatar,
-      ownerId: b.id,
+      ownerId: b.ownerId || b.id,
       isActive: b.status === 'Open',
       category: b.category,
       description: b.description,
+      email: b.email,
     }));
   }
 
@@ -67,12 +68,24 @@ export class ChatResolver {
     @CurrentUser() user: InternalUser,
     @Args('orqspaceId', { type: () => ID, nullable: true }) orqspaceId?: string
   ): Promise<any[]> {
-    return this.conversationsService.listUserConversations(user);
+    return this.conversationsService.listUserConversations(user, orqspaceId);
   }
 
   @Query(() => [ConversationGql], { name: 'conversations' })
   async getConversations(@CurrentUser() user: InternalUser): Promise<any[]> {
     return this.conversationsService.listUserConversations(user);
+  }
+
+  @ResolveField(() => [ChatMessageGql], { name: 'messages' })
+  async getConversationMessages(
+    @Parent() conv: ConversationGql,
+    @CurrentUser() user: InternalUser
+  ): Promise<any[]> {
+    if (conv.messages && conv.messages.length > 0) {
+      return conv.messages;
+    }
+    const res = await this.messagesService.getMessages(conv.id, user, 100);
+    return res?.messages || [];
   }
 
   @Query(() => ConversationGql, { name: 'chatConversation' })
@@ -98,7 +111,7 @@ export class ChatResolver {
     @Args('cursor', { nullable: true }) cursor?: string,
     @Args('limit', { type: () => Int, nullable: true, defaultValue: 50 }) limit: number = 50
   ): Promise<any> {
-    return this.messagesService.getMessages(conversationId, user, limit);
+    return this.messagesService.getMessages(conversationId, user, limit, undefined, cursor);
   }
 
   @Query(() => PaginatedMessagesGql, { name: 'messages' })
@@ -122,7 +135,18 @@ export class ChatResolver {
 
   @Query(() => [UserProfileGql], { name: 'businesses' })
   async getBusinesses(): Promise<any[]> {
-    return this.authService.getBusinesses();
+    const list = await this.authService.getBusinesses();
+    return list.map((b) => ({
+      id: b.ownerId || b.id,
+      name: b.name,
+      handle: b.email ? `@${b.email.split('@')[0]}` : `@${b.wsid}`,
+      email: b.email,
+      avatar: b.avatar,
+      role: 'business',
+      wsid: b.wsid,
+      isOnline: b.isOnline,
+      businessStatus: b.status,
+    }));
   }
 
   // =====================
@@ -153,7 +177,7 @@ export class ChatResolver {
     @CurrentUser() user: InternalUser
   ): Promise<any> {
     const edited = await this.messagesService.editMessage(user, input);
-    this.chatGateway.broadcastMessageEdited(input.conversationId, edited);
+    await this.chatGateway.broadcastMessageEdited(input.conversationId, edited, user);
     return edited;
   }
 
@@ -163,7 +187,7 @@ export class ChatResolver {
     @CurrentUser() user: InternalUser
   ): Promise<any> {
     const edited = await this.messagesService.editMessage(user, input);
-    this.chatGateway.broadcastMessageEdited(input.conversationId, edited);
+    await this.chatGateway.broadcastMessageEdited(input.conversationId, edited, user, input.messageId);
     return edited;
   }
 
@@ -173,7 +197,7 @@ export class ChatResolver {
     @CurrentUser() user: InternalUser
   ): Promise<any> {
     const deleted = await this.messagesService.deleteMessage(user, input);
-    this.chatGateway.broadcastMessageDeleted(input.conversationId, input.messageId);
+    await this.chatGateway.broadcastMessageDeleted(input.conversationId, deleted.id, user, input.messageId);
     return deleted;
   }
 
@@ -183,7 +207,7 @@ export class ChatResolver {
     @CurrentUser() user: InternalUser
   ): Promise<any> {
     const deleted = await this.messagesService.deleteMessage(user, input);
-    this.chatGateway.broadcastMessageDeleted(input.conversationId, input.messageId);
+    await this.chatGateway.broadcastMessageDeleted(input.conversationId, deleted.id, user, input.messageId);
     return deleted;
   }
 
@@ -196,6 +220,8 @@ export class ChatResolver {
     this.chatGateway.broadcastConversationUpdated(id, {
       status: 'ended',
       endedBy: user.id,
+      participantId: conv.participant?.id,
+      participantEmail: conv.participant?.email,
     });
     return conv;
   }
@@ -213,6 +239,8 @@ export class ChatResolver {
     this.chatGateway.broadcastConversationUpdated(id, {
       status: 'active',
       workspaceName: input?.workspaceName,
+      participantId: conv.participant?.id,
+      participantEmail: conv.participant?.email,
     });
     return conv;
   }
@@ -243,8 +271,10 @@ export class ChatResolver {
     @CurrentUser() user: InternalUser
   ): Promise<any> {
     const conv = await this.conversationsService.deleteChatView(input.conversationId, user);
-    this.chatGateway.broadcastConversationUpdated(input.conversationId, {
+    await this.chatGateway.broadcastConversationUpdated(input.conversationId, {
       clearedAt: Date.now(),
+      participantId: conv.clientId === user.id ? conv.businessId : conv.clientId,
+      participantEmail: conv.clientId === user.id ? conv.businessEmail : conv.clientEmail,
     });
     return conv;
   }
@@ -255,8 +285,10 @@ export class ChatResolver {
     @CurrentUser() user: InternalUser
   ): Promise<any> {
     const conv = await this.conversationsService.deleteChatView(id, user);
-    this.chatGateway.broadcastConversationUpdated(id, {
+    await this.chatGateway.broadcastConversationUpdated(id, {
       clearedAt: Date.now(),
+      participantId: conv.clientId === user.id ? conv.businessId : conv.clientId,
+      participantEmail: conv.clientId === user.id ? conv.businessEmail : conv.clientEmail,
     });
     return conv;
   }
@@ -284,13 +316,17 @@ export class ChatResolver {
     @Args('input') input: RequestSignedUploadInputGql,
     @CurrentUser() user: InternalUser
   ): Promise<any> {
-    return this.attachmentsService.requestSignedUpload(
+    const policy = await this.attachmentsService.requestSignedUpload(
       user.id,
       input.conversationId,
       input.fileName,
       input.mimeType,
       input.size
     );
+    return {
+      ...policy,
+      key: policy.objectKey,
+    };
   }
 
   @Mutation(() => HeartbeatResultGql, { name: 'heartbeat' })

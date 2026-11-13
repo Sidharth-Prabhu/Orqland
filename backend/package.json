@@ -5,7 +5,7 @@
   "scripts": {
     "build": "nest build",
     "start": "nest start",
-    "start:dev": "node dist/backend/src/main",
+    "start:dev": "pnpm --filter @orqland/contracts build && nest build && node dist/backend/src/main",
     "start:prod": "node dist/backend/src/main",
     "lint": "eslint \"{src,apps,libs,test}/**/*.ts\"",
     "test": "jest",

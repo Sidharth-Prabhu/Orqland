@@ -843,7 +843,19 @@ export const chatService = {
         };
 
         const onPresenceUpdate = (payload: any) => {
-          handleRemoteUpdate();
+          if (!payload?.userEmail && !payload?.userId) return;
+          if (inMemoryCache[email]) {
+            inMemoryCache[email] = inMemoryCache[email].map((c) => {
+              if (
+                c.participant.email?.toLowerCase() === payload.userEmail?.toLowerCase() ||
+                c.participant.id === payload.userId
+              ) {
+                return { ...c, participant: { ...c.participant, isOnline: payload.isOnline } };
+              }
+              return c;
+            });
+            notifyLocalSubscribers(email, inMemoryCache[email]);
+          }
         };
 
         const onConversationUpdate = (payload: any) => {

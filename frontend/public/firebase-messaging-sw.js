@@ -16,15 +16,22 @@ const messaging = firebase.messaging();
 
 // Handle background messages
 messaging.onBackgroundMessage((payload) => {
-  const notificationTitle = payload.notification?.title || 'New Message';
-  const notificationOptions = {
-    body: payload.notification?.body || 'You have received a new message.',
-    icon: '/icon-192.png',
-    badge: '/badge-72.png',
-    data: payload.data || {},
-  };
+  return self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
+    const isAppFocused = clientList.some((client) => client.focused || client.visibilityState === 'visible');
+    if (isAppFocused) {
+      return; // Suppress notification when user has the chat tab open and active
+    }
 
-  self.registration.showNotification(notificationTitle, notificationOptions);
+    const notificationTitle = payload.notification?.title || 'New Message';
+    const notificationOptions = {
+      body: payload.notification?.body || 'You have received a new message.',
+      icon: '/icon-192.png',
+      badge: '/badge-72.png',
+      data: payload.data || {},
+    };
+
+    return self.registration.showNotification(notificationTitle, notificationOptions);
+  });
 });
 
 self.addEventListener('install', (event) => {

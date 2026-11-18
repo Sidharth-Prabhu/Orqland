@@ -445,6 +445,10 @@ export class ConversationsService {
 
         const space = spaceRows[0];
 
+        if (clientUser.id === space.ownerId) {
+          throw new BadRequestException('Cannot initiate a chat conversation with your own workspace.');
+        }
+
         // 2. Enforce single thread per (clientUserId, orqspaceId) pair
         const existing = await db
           .select()
@@ -524,6 +528,10 @@ export class ConversationsService {
       firebaseUid: `dev-${matchedSpace?.id || bizTarget}`,
     };
     const resolvedOrqspaceId = matchedSpace?.id || targetWorkspaceId || targetBusiness.id;
+
+    if (clientUser.id === targetBusiness.id || (matchedSpace?.ownerId && clientUser.id === matchedSpace.ownerId)) {
+      throw new BadRequestException('Cannot initiate a chat conversation with your own workspace.');
+    }
 
     const existingMemory = this.inMemoryConversations.find(
       (c) =>

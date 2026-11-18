@@ -66,27 +66,6 @@ CREATE TABLE "chat_push_tokens" (
 	CONSTRAINT "chat_push_tokens_token_unique" UNIQUE("token")
 );
 --> statement-breakpoint
-CREATE TABLE "orq_users" (
-	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
-	"display_name" varchar(100),
-	"email" varchar(255),
-	"avatar" varchar(500),
-	"is_active" boolean DEFAULT true NOT NULL,
-	"created_at" timestamp DEFAULT now() NOT NULL,
-	CONSTRAINT "orq_users_email_unique" UNIQUE("email")
-);
---> statement-breakpoint
-CREATE TABLE "orqspaces" (
-	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
-	"orqspace_id" varchar(14) NOT NULL,
-	"name" varchar(150) NOT NULL,
-	"logo_url" varchar(500),
-	"owner_id" uuid NOT NULL,
-	"is_active" boolean DEFAULT true NOT NULL,
-	"created_at" timestamp DEFAULT now() NOT NULL,
-	CONSTRAINT "orqspaces_orqspace_id_unique" UNIQUE("orqspace_id")
-);
---> statement-breakpoint
 ALTER TABLE "chat_conversations" ADD CONSTRAINT "chat_conversations_client_user_id_orq_users_id_fk" FOREIGN KEY ("client_user_id") REFERENCES "public"."orq_users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "chat_conversations" ADD CONSTRAINT "chat_conversations_orqspace_id_orqspaces_id_fk" FOREIGN KEY ("orqspace_id") REFERENCES "public"."orqspaces"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "chat_conversations" ADD CONSTRAINT "chat_conversations_ended_by_user_id_orq_users_id_fk" FOREIGN KEY ("ended_by_user_id") REFERENCES "public"."orq_users"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
@@ -97,7 +76,6 @@ ALTER TABLE "chat_message_receipts" ADD CONSTRAINT "chat_message_receipts_last_r
 ALTER TABLE "chat_messages" ADD CONSTRAINT "chat_messages_conversation_id_chat_conversations_id_fk" FOREIGN KEY ("conversation_id") REFERENCES "public"."chat_conversations"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "chat_messages" ADD CONSTRAINT "chat_messages_sender_user_id_orq_users_id_fk" FOREIGN KEY ("sender_user_id") REFERENCES "public"."orq_users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "chat_push_tokens" ADD CONSTRAINT "chat_push_tokens_user_id_orq_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."orq_users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "orqspaces" ADD CONSTRAINT "orqspaces_owner_id_orq_users_id_fk" FOREIGN KEY ("owner_id") REFERENCES "public"."orq_users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 CREATE UNIQUE INDEX "uq_chat_conv_client_orqspace" ON "chat_conversations" USING btree ("client_user_id","orqspace_id");--> statement-breakpoint
 CREATE INDEX "idx_chat_conv_orqspace_updated" ON "chat_conversations" USING btree ("orqspace_id","last_message_at");--> statement-breakpoint
 CREATE INDEX "idx_chat_conv_client_updated" ON "chat_conversations" USING btree ("client_user_id","last_message_at");--> statement-breakpoint

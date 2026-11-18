@@ -1,3 +1,4 @@
+import { BadRequestException } from '@nestjs/common';
 import { ConversationsService } from './conversations.service';
 import { DatabaseService } from '../../infrastructure/database/database.service';
 import { AuthService, InternalUser } from '../auth/auth.service';
@@ -73,6 +74,16 @@ describe('ConversationsService', () => {
 
     expect(conv).toBeDefined();
     expect(conv.status).toBe('active');
+  });
+
+  it('should prevent workspace owner from initiating conversation with own workspace', async () => {
+    await expect(
+      conversationsService.initiateConversation(businessUser, {
+        businessEmail: businessUser.email,
+        businessName: businessUser.name,
+        initialMessage: 'Self chat attempt',
+      })
+    ).rejects.toThrow(BadRequestException);
   });
 
   it('should end conversation session and mark it as ended', async () => {

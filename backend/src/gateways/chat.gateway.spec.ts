@@ -33,6 +33,7 @@ describe('ChatGateway & Realtime Room Authorization', () => {
     leave: jest.fn().mockResolvedValue(undefined),
     emit: jest.fn(),
     to: jest.fn().mockReturnValue({ emit: jest.fn() }),
+    rooms: new Set<string>(),
   };
 
   const mockServer: any = {
@@ -161,11 +162,21 @@ describe('ChatGateway & Realtime Room Authorization', () => {
   });
 
   describe('Typing & Read Updates (Section 6.3)', () => {
-    it('should broadcast typing:update to room members', async () => {
+    it('should broadcast typing:update to room members when client is in room', async () => {
       const convId = 'c0000000-0000-0000-0000-000000000001';
+      mockSocket.rooms = new Set([`conversation:${convId}`]);
       await gateway.handleTypingStart(mockSocket, { conversationId: convId });
 
       expect(mockSocket.to).toHaveBeenCalledWith(`conversation:${convId}`);
+    });
+
+    it('should reject typing:update if client has not joined the room', async () => {
+      const convId = 'c0000000-0000-0000-0000-000000000001';
+      mockSocket.rooms = new Set();
+      jest.clearAllMocks();
+      await gateway.handleTypingStart(mockSocket, { conversationId: convId });
+
+      expect(mockSocket.to).not.toHaveBeenCalled();
     });
 
     it('should update read cursor and broadcast message:read:update', async () => {

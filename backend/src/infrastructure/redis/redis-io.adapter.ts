@@ -4,6 +4,14 @@ import { createAdapter } from '@socket.io/redis-adapter';
 import { RedisService } from './redis.service';
 import { INestApplicationContext, Logger } from '@nestjs/common';
 
+const allowedOrigins = [
+  'http://localhost:3000',
+  'http://localhost:3001',
+  'http://127.0.0.1:3000',
+  'http://127.0.0.1:3001',
+  process.env.FRONTEND_URL,
+].filter(Boolean) as string[];
+
 export class RedisIoAdapter extends IoAdapter {
   private adapterConstructor: ReturnType<typeof createAdapter> | null = null;
   protected readonly ioLogger = new Logger(RedisIoAdapter.name);
@@ -32,7 +40,7 @@ export class RedisIoAdapter extends IoAdapter {
     const server = super.createIOServer(port, {
       ...options,
       cors: {
-        origin: '*',
+        origin: allowedOrigins,
         methods: ['GET', 'POST'],
         credentials: true,
       },

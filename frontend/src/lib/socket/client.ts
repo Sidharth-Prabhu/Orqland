@@ -1,4 +1,5 @@
 import { io, Socket } from 'socket.io-client';
+import { auth } from '../firebase';
 
 let socket: Socket | null = null;
 let currentToken: string | null = null;
@@ -36,6 +37,21 @@ export function getChatSocket(token?: string, email?: string): Socket {
       reconnectionDelayMax: 5000,
       timeout: 20000,
       autoConnect: true,
+    });
+
+    socket.io.on('reconnect_attempt', async () => {
+      try {
+        const user = auth.currentUser;
+        if (user) {
+          const freshToken = await user.getIdToken(true);
+          currentToken = freshToken;
+          if (socket) {
+            socket.auth = { token: freshToken, email: user.email };
+          }
+        }
+      } catch (err) {
+        console.warn('Failed to refresh Firebase token for socket reconnect:', err);
+      }
     });
 
     socket.on('connect', () => {

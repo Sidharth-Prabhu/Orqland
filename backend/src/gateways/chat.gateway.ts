@@ -27,9 +27,19 @@ import { FirebaseAdminService } from '../modules/auth/firebase-admin.service';
 
 import { WsAuthGuard } from '../common/guards/ws-auth.guard';
 
+const allowedOrigins = [
+  'http://localhost:3000',
+  'http://localhost:3001',
+  'http://127.0.0.1:3000',
+  'http://127.0.0.1:3001',
+  process.env.FRONTEND_URL,
+].filter(Boolean) as string[];
+
 @WebSocketGateway({
   cors: {
-    origin: '*',
+    origin: allowedOrigins,
+    methods: ['GET', 'POST'],
+    credentials: true,
   },
 })
 @UseGuards(WsAuthGuard)
@@ -379,6 +389,10 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const user: InternalUser = client.data.user;
     if (!user || !payload?.conversationId) return;
 
+    if (!client.rooms?.has(`conversation:${payload.conversationId}`)) {
+      return;
+    }
+
     client.to(`conversation:${payload.conversationId}`).emit(CHAT_EVENTS.TYPING_UPDATE, {
       conversationId: payload.conversationId,
       userId: user.id,
@@ -394,6 +408,10 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   ) {
     const user: InternalUser = client.data.user;
     if (!user || !payload?.conversationId) return;
+
+    if (!client.rooms?.has(`conversation:${payload.conversationId}`)) {
+      return;
+    }
 
     client.to(`conversation:${payload.conversationId}`).emit(CHAT_EVENTS.TYPING_UPDATE, {
       conversationId: payload.conversationId,
